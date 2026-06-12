@@ -70,6 +70,7 @@ struct sc_server_params {
     bool device_status;
     bool xiaomi_helper;
     enum sc_quick_action quick_action;
+    enum sc_output_format output_format;
     const char *send_file;
     bool select_usb;
     bool select_tcpip;

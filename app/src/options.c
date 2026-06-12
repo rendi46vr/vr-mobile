@@ -63,6 +63,7 @@ const struct scrcpy_options scrcpy_options_default = {
     .display_ime_policy = SC_DISPLAY_IME_POLICY_UNDEFINED,
     .render_fit = SC_RENDER_FIT_AUTO,
     .quick_action = SC_QUICK_ACTION_NONE,
+    .output_format = SC_OUTPUT_FORMAT_TEXT,
     .window_x = SC_WINDOW_POSITION_UNDEFINED,
     .window_y = SC_WINDOW_POSITION_UNDEFINED,
     .window_width = 0,

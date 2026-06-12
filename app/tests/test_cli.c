@@ -300,6 +300,28 @@ static void test_vr_mobile_utility_options(void) {
     assert(args.opts.connection_health);
 
     args.opts = scrcpy_options_default;
+    char *argv_json_output[] = {
+        "scrcpy",
+        "--connection-health",
+        "--output-format=json",
+    };
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_json_output),
+                           argv_json_output);
+    assert(ok);
+    assert(args.opts.connection_health);
+    assert(args.opts.output_format == SC_OUTPUT_FORMAT_JSON);
+
+    args.opts = scrcpy_options_default;
+    char *argv_bad_output[] = {
+        "scrcpy",
+        "--output-format=xml",
+    };
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_bad_output), argv_bad_output);
+    assert(!ok);
+
+    args.opts = scrcpy_options_default;
     char *argv_clipboard_history[] = {
         "scrcpy",
         "--clipboard-history",

@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <inttypes.h>
+#include <stddef.h>
 
 #include "adb/adb_device.h"
 #include "util/intr.h"
@@ -76,6 +77,13 @@ sc_adb_install(struct sc_intr *intr, const char *serial, const char *local,
 bool
 sc_adb_shell(struct sc_intr *intr, const char *serial, const char *command,
              unsigned flags);
+
+/**
+ * Execute `adb shell <command>` and capture stdout.
+ */
+char *
+sc_adb_shell_output(struct sc_intr *intr, const char *serial,
+                    const char *command, size_t max_size, unsigned flags);
 
 /**
  * Execute `adb tcpip <port>`

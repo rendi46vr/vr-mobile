@@ -400,6 +400,7 @@ scrcpy(struct scrcpy_options *options) {
         .device_status = options->device_status,
         .xiaomi_helper = options->xiaomi_helper,
         .quick_action = options->quick_action,
+        .output_format = options->output_format,
         .send_file = options->send_file,
         .cleanup = options->cleanup,
         .power_on = options->power_on,

@@ -365,6 +365,50 @@ sc_adb_shell(struct sc_intr *intr, const char *serial, const char *command,
     return process_check_success_intr(intr, pid, "adb shell", flags);
 }
 
+char *
+sc_adb_shell_output(struct sc_intr *intr, const char *serial,
+                    const char *command, size_t max_size, unsigned flags) {
+    assert(serial);
+    assert(command);
+    assert(max_size >= 2);
+
+    const char *const argv[] =
+        SC_ADB_COMMAND("-s", serial, "shell", command);
+
+    char *buf = malloc(max_size);
+    if (!buf) {
+        LOG_OOM();
+        return NULL;
+    }
+
+    sc_pipe pout;
+    sc_pid pid = sc_adb_execute_p(argv, flags, &pout);
+    if (pid == SC_PROCESS_NONE) {
+        LOGE("Could not execute \"adb shell\"");
+        free(buf);
+        return NULL;
+    }
+
+    ssize_t r = sc_pipe_read_all_intr(intr, pid, pout, buf, max_size - 1);
+    sc_pipe_close(pout);
+
+    bool ok = process_check_success_intr(intr, pid, "adb shell", flags);
+    if (!ok || r == -1) {
+        free(buf);
+        return NULL;
+    }
+
+    assert((size_t) r < max_size);
+    if ((size_t) r == max_size - 1) {
+        LOGW("Result of \"adb shell\" does not fit in buffer");
+        free(buf);
+        return NULL;
+    }
+
+    buf[r] = '\0';
+    return buf;
+}
+
 bool
 sc_adb_tcpip(struct sc_intr *intr, const char *serial, uint16_t port,
              unsigned flags) {

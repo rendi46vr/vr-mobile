@@ -273,6 +273,8 @@ APK Android pendamping.
 ## Urutan eksekusi yang disarankan
 
 1. Tambahkan output JSON untuk command status/health di core scrcpy.
+   **Status:** started via `--output-format=json` for `--connection-health` and
+   `--device-status`.
 2. Buat desktop launcher minimal.
 3. Tambahkan process manager connect/disconnect.
 4. Tambahkan tray menu.

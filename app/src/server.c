@@ -1154,10 +1154,82 @@ sc_server_log_device_state_hint(const struct sc_adb_device *device) {
     }
 }
 
+static void
+sc_server_print_json_string(const char *s) {
+    if (!s) {
+        fputs("null", stdout);
+        return;
+    }
+
+    fputc('"', stdout);
+    for (; *s; ++s) {
+        unsigned char c = (unsigned char) *s;
+        switch (c) {
+            case '"':
+                fputs("\\\"", stdout);
+                break;
+            case '\\':
+                fputs("\\\\", stdout);
+                break;
+            case '\b':
+                fputs("\\b", stdout);
+                break;
+            case '\f':
+                fputs("\\f", stdout);
+                break;
+            case '\n':
+                fputs("\\n", stdout);
+                break;
+            case '\r':
+                fputs("\\r", stdout);
+                break;
+            case '\t':
+                fputs("\\t", stdout);
+                break;
+            default:
+                if (c < 0x20) {
+                    fprintf(stdout, "\\u%04x", c);
+                } else {
+                    fputc(c, stdout);
+                }
+                break;
+        }
+    }
+    fputc('"', stdout);
+}
+
+static const char *
+sc_server_get_device_type_name(const char *serial) {
+    enum sc_adb_device_type type = sc_adb_device_get_type(serial);
+    return type == SC_ADB_DEVICE_TYPE_TCPIP ? "wifi" : "usb";
+}
+
+static void
+sc_server_print_connection_health_json(const struct sc_vec_adb_devices *devices,
+                                       const char *last_wifi_serial) {
+    fputs("{\"devices\":[", stdout);
+    for (size_t i = 0; i < devices->size; ++i) {
+        const struct sc_adb_device *device = &devices->data[i];
+        if (i) {
+            fputc(',', stdout);
+        }
+
+        fputs("{\"serial\":", stdout);
+        sc_server_print_json_string(device->serial);
+        fputs(",\"state\":", stdout);
+        sc_server_print_json_string(device->state);
+        fputs(",\"type\":", stdout);
+        sc_server_print_json_string(sc_server_get_device_type_name(
+                                        device->serial));
+        fputc('}', stdout);
+    }
+    fputs("],\"last_wifi_serial\":", stdout);
+    sc_server_print_json_string(last_wifi_serial);
+    fputs("}\n", stdout);
+}
+
 static bool
 sc_server_run_connection_health(struct sc_server *server) {
-    LOGI("Connection health:");
-
     struct sc_vec_adb_devices devices = SC_VECTOR_INITIALIZER;
     bool ok = sc_adb_list_devices(&server->intr, 0, &devices);
     if (!ok) {
@@ -1165,6 +1237,17 @@ sc_server_run_connection_health(struct sc_server *server) {
              "accessible.");
         return false;
     }
+
+    char *last_wifi_serial = sc_connect_manager_load_last_wifi_serial();
+
+    if (server->params.output_format == SC_OUTPUT_FORMAT_JSON) {
+        sc_server_print_connection_health_json(&devices, last_wifi_serial);
+        free(last_wifi_serial);
+        sc_adb_devices_destroy(&devices);
+        return true;
+    }
+
+    LOGI("Connection health:");
 
     if (!devices.size) {
         LOGE("No Android device found.");
@@ -1178,7 +1261,6 @@ sc_server_run_connection_health(struct sc_server *server) {
         sc_server_log_device_state_hint(device);
     }
 
-    char *last_wifi_serial = sc_connect_manager_load_last_wifi_serial();
     if (last_wifi_serial) {
         LOGI("Last saved Wi-Fi device: %s", last_wifi_serial);
         LOGI("Retry it with: scrcpy --connect-manager");
@@ -1191,6 +1273,55 @@ sc_server_run_connection_health(struct sc_server *server) {
 
 static bool
 sc_server_run_device_status(struct sc_server *server, const char *serial) {
+    if (server->params.output_format == SC_OUTPUT_FORMAT_JSON) {
+        char *manufacturer =
+            sc_adb_getprop(&server->intr, serial, "ro.product.manufacturer",
+                           SC_ADB_SILENT);
+        char *model =
+            sc_adb_getprop(&server->intr, serial, "ro.product.model",
+                           SC_ADB_SILENT);
+        char *android =
+            sc_adb_getprop(&server->intr, serial, "ro.build.version.release",
+                           SC_ADB_SILENT);
+        char *ip = sc_adb_get_device_ip(&server->intr, serial, SC_ADB_SILENT);
+        char *wm_size =
+            sc_adb_shell_output(&server->intr, serial, "wm size", 4096,
+                                SC_ADB_SILENT);
+        char *battery =
+            sc_adb_shell_output(&server->intr, serial, "dumpsys battery",
+                                16384, SC_ADB_SILENT);
+        char *storage =
+            sc_adb_shell_output(&server->intr, serial, "df -h /sdcard", 8192,
+                                SC_ADB_SILENT);
+
+        fputs("{\"serial\":", stdout);
+        sc_server_print_json_string(serial);
+        fputs(",\"manufacturer\":", stdout);
+        sc_server_print_json_string(manufacturer);
+        fputs(",\"model\":", stdout);
+        sc_server_print_json_string(model);
+        fputs(",\"android_version\":", stdout);
+        sc_server_print_json_string(android);
+        fputs(",\"wifi_ip\":", stdout);
+        sc_server_print_json_string(ip);
+        fputs(",\"screen_size\":", stdout);
+        sc_server_print_json_string(wm_size);
+        fputs(",\"battery\":", stdout);
+        sc_server_print_json_string(battery);
+        fputs(",\"storage\":", stdout);
+        sc_server_print_json_string(storage);
+        fputs("}\n", stdout);
+
+        free(manufacturer);
+        free(model);
+        free(android);
+        free(ip);
+        free(wm_size);
+        free(battery);
+        free(storage);
+        return true;
+    }
+
     LOGI("Device status panel:");
     LOGI("ADB serial: %s", serial);
 

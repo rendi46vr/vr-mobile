@@ -66,6 +66,7 @@ enum {
     OPT_NO_CLEANUP,
     OPT_PRINT_FPS,
     OPT_NO_POWER_ON,
+    OPT_OUTPUT_FORMAT,
     OPT_VIDEO_CODEC,
     OPT_NO_AUDIO,
     OPT_AUDIO_BIT_RATE,
@@ -715,6 +716,14 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_NO_POWER_ON,
         .longopt = "no-power-on",
         .text = "Do not power on the device on start.",
+    },
+    {
+        .longopt_id = OPT_OUTPUT_FORMAT,
+        .longopt = "output-format",
+        .argdesc = "format",
+        .text = "Set utility command output format.\n"
+                "Possible values are \"text\" and \"json\".\n"
+                "Default is \"text\".",
     },
     {
         .longopt_id = OPT_NO_VD_DESTROY_CONTENT,
@@ -2489,6 +2498,22 @@ parse_quick_action(const char *s, enum sc_quick_action *action) {
 }
 
 static bool
+parse_output_format(const char *s, enum sc_output_format *format) {
+    if (!strcmp(s, "text")) {
+        *format = SC_OUTPUT_FORMAT_TEXT;
+        return true;
+    }
+
+    if (!strcmp(s, "json")) {
+        *format = SC_OUTPUT_FORMAT_JSON;
+        return true;
+    }
+
+    LOGE("Unsupported output format: %s (expected text or json)", s);
+    return false;
+}
+
+static bool
 parse_mouse_binding(char c, enum sc_mouse_binding *b) {
     switch (c) {
         case '+':
@@ -2943,6 +2968,11 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case OPT_NO_POWER_ON:
                 opts->power_on = false;
+                break;
+            case OPT_OUTPUT_FORMAT:
+                if (!parse_output_format(optarg, &opts->output_format)) {
+                    return false;
+                }
                 break;
             case OPT_PRINT_FPS:
                 opts->start_fps_counter = true;

@@ -128,6 +128,7 @@ Connection health:
 
 ```bash
 scrcpy --connection-health
+scrcpy --connection-health --output-format=json
 ```
 
 This prints detected ADB devices, their states, the last saved Wi-Fi device,
@@ -137,6 +138,7 @@ Device status panel:
 
 ```bash
 scrcpy --connect-manager --device-status
+scrcpy --connect-manager --device-status --output-format=json
 ```
 
 This prints the selected device serial, model, Android version, Wi-Fi IP,

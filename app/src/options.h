@@ -247,6 +247,11 @@ enum sc_quick_action {
     SC_QUICK_ACTION_COLLAPSE_PANELS,
 };
 
+enum sc_output_format {
+    SC_OUTPUT_FORMAT_TEXT,
+    SC_OUTPUT_FORMAT_JSON,
+};
+
 struct sc_port_range {
     uint16_t first;
     uint16_t last;
@@ -300,6 +305,7 @@ struct scrcpy_options {
     enum sc_display_ime_policy display_ime_policy;
     enum sc_render_fit render_fit;
     enum sc_quick_action quick_action;
+    enum sc_output_format output_format;
     int16_t window_x; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     int16_t window_y; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     uint16_t window_width;
