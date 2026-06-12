@@ -227,6 +227,26 @@ enum sc_render_fit {
     SC_RENDER_FIT_UNSCALED,
 };
 
+enum sc_connect_manager_mode {
+    SC_CONNECT_MANAGER_DISABLED,
+    SC_CONNECT_MANAGER_AUTO,
+    SC_CONNECT_MANAGER_USB,
+    SC_CONNECT_MANAGER_WIFI,
+};
+
+enum sc_quick_action {
+    SC_QUICK_ACTION_NONE,
+    SC_QUICK_ACTION_LOCK,
+    SC_QUICK_ACTION_WAKE,
+    SC_QUICK_ACTION_SCREEN_OFF,
+    SC_QUICK_ACTION_SCREEN_ON,
+    SC_QUICK_ACTION_ROTATE,
+    SC_QUICK_ACTION_SCREENSHOT,
+    SC_QUICK_ACTION_NOTIFICATION_PANEL,
+    SC_QUICK_ACTION_SETTINGS_PANEL,
+    SC_QUICK_ACTION_COLLAPSE_PANELS,
+};
+
 struct sc_port_range {
     uint16_t first;
     uint16_t last;
@@ -249,7 +269,9 @@ struct scrcpy_options {
     const char *camera_size;
     const char *camera_ar;
     const char *camera_zoom;
+    const char *send_file;
     uint16_t camera_fps;
+    uint16_t auto_reconnect_delay;
     enum sc_log_level log_level;
     enum sc_codec video_codec;
     enum sc_codec audio_codec;
@@ -277,6 +299,7 @@ struct scrcpy_options {
     enum sc_orientation record_orientation;
     enum sc_display_ime_policy display_ime_policy;
     enum sc_render_fit render_fit;
+    enum sc_quick_action quick_action;
     int16_t window_x; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     int16_t window_y; // SC_WINDOW_POSITION_UNDEFINED for "auto"
     uint16_t window_width;
@@ -313,9 +336,16 @@ struct scrcpy_options {
     bool legacy_paste;
     bool power_off_on_close;
     bool clipboard_autosync;
+    bool clipboard_history;
     bool downsize_on_error;
     bool tcpip;
     const char *tcpip_dst;
+    enum sc_connect_manager_mode connect_manager;
+    bool wireless_setup;
+    bool auto_reconnect;
+    bool connection_health;
+    bool device_status;
+    bool xiaomi_helper;
     bool select_usb;
     bool select_tcpip;
     bool cleanup;

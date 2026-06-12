@@ -19,6 +19,7 @@ struct sc_receiver {
 
     struct sc_acksync *acksync;
     struct sc_uhid_devices *uhid_devices;
+    bool clipboard_history;
 
     const struct sc_receiver_callbacks *cbs;
     void *cbs_userdata;
@@ -30,6 +31,7 @@ struct sc_receiver_callbacks {
 
 bool
 sc_receiver_init(struct sc_receiver *receiver, sc_socket control_socket,
+                 bool clipboard_history,
                  const struct sc_receiver_callbacks *cbs, void *cbs_userdata);
 
 void

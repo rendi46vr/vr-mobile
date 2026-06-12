@@ -353,6 +353,19 @@ sc_adb_install(struct sc_intr *intr, const char *serial, const char *local,
 }
 
 bool
+sc_adb_shell(struct sc_intr *intr, const char *serial, const char *command,
+             unsigned flags) {
+    assert(serial);
+    assert(command);
+
+    const char *const argv[] =
+        SC_ADB_COMMAND("-s", serial, "shell", command);
+
+    sc_pid pid = sc_adb_execute(argv, flags);
+    return process_check_success_intr(intr, pid, "adb shell", flags);
+}
+
+bool
 sc_adb_tcpip(struct sc_intr *intr, const char *serial, uint16_t port,
              unsigned flags) {
     char port_string[5 + 1];
@@ -419,7 +432,7 @@ sc_adb_disconnect(struct sc_intr *intr, const char *ip_port, unsigned flags) {
     return process_check_success_intr(intr, pid, "adb disconnect", flags);
 }
 
-static bool
+bool
 sc_adb_list_devices(struct sc_intr *intr, unsigned flags,
                     struct sc_vec_adb_devices *out_vec) {
     const char *const argv[] = SC_ADB_COMMAND("devices", "-l");

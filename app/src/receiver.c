@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <SDL3/SDL_clipboard.h>
 
+#include "clipboard_history.h"
 #include "device_msg.h"
 #include "events.h"
 #include "util/log.h"
@@ -18,8 +19,14 @@ struct sc_uhid_output_task_data {
     uint8_t *data;
 };
 
+struct sc_clipboard_task_data {
+    char *text;
+    bool history;
+};
+
 bool
 sc_receiver_init(struct sc_receiver *receiver, sc_socket control_socket,
+                 bool clipboard_history,
                  const struct sc_receiver_callbacks *cbs, void *cbs_userdata) {
     bool ok = sc_mutex_init(&receiver->mutex);
     if (!ok) {
@@ -29,6 +36,7 @@ sc_receiver_init(struct sc_receiver *receiver, sc_socket control_socket,
     receiver->control_socket = control_socket;
     receiver->acksync = NULL;
     receiver->uhid_devices = NULL;
+    receiver->clipboard_history = clipboard_history;
 
     assert(cbs && cbs->on_ended);
     receiver->cbs = cbs;
@@ -46,7 +54,8 @@ static void
 task_set_clipboard(void *userdata) {
     assert(sc_thread_is_main());
 
-    char *text = userdata;
+    struct sc_clipboard_task_data *data = userdata;
+    char *text = data->text;
 
     char *current = SDL_GetClipboardText();
     bool same = current && !strcmp(current, text);
@@ -62,7 +71,12 @@ task_set_clipboard(void *userdata) {
         }
     }
 
+    if (data->history) {
+        sc_clipboard_history_append(text);
+    }
+
     free(text);
+    free(data);
 }
 
 static void
@@ -84,11 +98,20 @@ process_msg(struct sc_receiver *receiver, struct sc_device_msg *msg) {
         case DEVICE_MSG_TYPE_CLIPBOARD: {
             // Take ownership of the text (do not destroy the msg)
             char *text = msg->clipboard.text;
+            struct sc_clipboard_task_data *data = malloc(sizeof(*data));
+            if (!data) {
+                LOG_OOM();
+                free(text);
+                return;
+            }
+            data->text = text;
+            data->history = receiver->clipboard_history;
 
-            bool ok = sc_run_on_main_thread(task_set_clipboard, text, false);
+            bool ok = sc_run_on_main_thread(task_set_clipboard, data, false);
             if (!ok) {
                 LOGW("Could not post clipboard to main thread");
                 free(text);
+                free(data);
                 return;
             }
 

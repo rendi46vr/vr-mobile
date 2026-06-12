@@ -1,6 +1,7 @@
 #include "common.h"
 
 #include <stdbool.h>
+#include <inttypes.h>
 #include <stdio.h>
 #ifdef HAVE_V4L2
 # include <libavdevice/avdevice.h>
@@ -39,6 +40,7 @@ main_scrcpy(int argc, char *argv[]) {
         .opts = scrcpy_options_default,
         .help = false,
         .version = false,
+        .profile_saved = false,
         .pause_on_exit = SC_PAUSE_ON_EXIT_UNDEFINED,
     };
 
@@ -67,6 +69,11 @@ main_scrcpy(int argc, char *argv[]) {
         goto end;
     }
 
+    if (args.profile_saved) {
+        ret = SCRCPY_EXIT_SUCCESS;
+        goto end;
+    }
+
 #ifdef SCRCPY_LAVF_REQUIRES_REGISTER_ALL
     av_register_all();
 #endif
@@ -84,6 +91,8 @@ main_scrcpy(int argc, char *argv[]) {
 
     sc_log_configure();
 
+    unsigned reconnect_attempt = 0;
+retry:
     if (!sc_main_thread_init()) {
         ret = SCRCPY_EXIT_FAILURE;
         goto net_cleanup;
@@ -96,6 +105,15 @@ main_scrcpy(int argc, char *argv[]) {
 #endif
 
     sc_main_thread_destroy();
+
+    if (args.opts.auto_reconnect && ret == SCRCPY_EXIT_DISCONNECTED) {
+        ++reconnect_attempt;
+        LOGW("Device disconnected, reconnecting in %" PRIu16
+             " second(s)... (attempt %u)",
+             args.opts.auto_reconnect_delay, reconnect_attempt);
+        SDL_Delay((uint32_t) args.opts.auto_reconnect_delay * 1000);
+        goto retry;
+    }
 
 net_cleanup:
     net_cleanup();

@@ -6,15 +6,18 @@ src = [
     'src/adb/adb_tunnel.c',
     'src/audio_player.c',
     'src/audio_regulator.c',
+    'src/clipboard_history.c',
     'src/cli.c',
     'src/clock.c',
     'src/compat.c',
+    'src/connect_manager.c',
     'src/control_msg.c',
     'src/controller.c',
     'src/decoder.c',
     'src/delay_buffer.c',
     'src/demuxer.c',
     'src/device_msg.c',
+    'src/device_profile.c',
     'src/disconnect.c',
     'src/events.c',
     'src/icon.c',
@@ -66,6 +69,7 @@ src = [
     'src/util/thread.c',
     'src/util/tick.c',
     'src/util/timeout.c',
+    'src/vr_config.c',
 ]
 
 feature_test_macros = [
@@ -77,10 +81,11 @@ feature_test_macros = [
 conf = configuration_data()
 
 if host_machine.system() == 'windows'
+    sys_file_src = 'src/sys/win/file.c'
     windows = import('windows')
     src += [
         'src/util/command.c',
-        'src/sys/win/file.c',
+        sys_file_src,
         'src/sys/win/process.c',
         windows.compile_resources('scrcpy-windows.rc'),
     ]
@@ -89,8 +94,9 @@ if host_machine.system() == 'windows'
         '-DWINVER=0x0600',
     ]
 else
+    sys_file_src = 'src/sys/unix/file.c'
     src += [
-        'src/sys/unix/file.c',
+        sys_file_src,
         'src/sys/unix/process.c',
     ]
     if host_machine.system() == 'darwin'
@@ -242,12 +248,40 @@ if get_option('buildtype') == 'debug'
         ['test_cli', [
             'tests/test_cli.c',
             'src/cli.c',
+            'src/device_profile.c',
             'src/options.c',
+            'src/util/env.c',
+            'src/util/file.c',
             'src/util/log.c',
             'src/util/net.c',
             'src/util/str.c',
             'src/util/strbuf.c',
             'src/util/term.c',
+            'src/vr_config.c',
+            sys_file_src,
+        ]],
+        ['test_clipboard_history', [
+            'tests/test_clipboard_history.c',
+            'src/clipboard_history.c',
+            'src/util/env.c',
+            'src/util/file.c',
+            'src/util/log.c',
+            'src/util/str.c',
+            'src/util/strbuf.c',
+            'src/vr_config.c',
+            sys_file_src,
+        ]],
+        ['test_connect_manager', [
+            'tests/test_connect_manager.c',
+            'src/connect_manager.c',
+            'src/adb/adb_device.c',
+            'src/util/env.c',
+            'src/util/file.c',
+            'src/util/log.c',
+            'src/util/str.c',
+            'src/util/strbuf.c',
+            'src/vr_config.c',
+            sys_file_src,
         ]],
         ['test_command_windows', [
           'tests/test_command_windows.c',

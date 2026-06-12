@@ -394,6 +394,13 @@ scrcpy(struct scrcpy_options *options) {
         .downsize_on_error = options->downsize_on_error,
         .tcpip = options->tcpip,
         .tcpip_dst = options->tcpip_dst,
+        .connect_manager = options->connect_manager,
+        .wireless_setup = options->wireless_setup,
+        .connection_health = options->connection_health,
+        .device_status = options->device_status,
+        .xiaomi_helper = options->xiaomi_helper,
+        .quick_action = options->quick_action,
+        .send_file = options->send_file,
         .cleanup = options->cleanup,
         .power_on = options->power_on,
         .kill_adb_on_close = options->kill_adb_on_close,
@@ -430,7 +437,15 @@ scrcpy(struct scrcpy_options *options) {
 
     server_started = true;
 
-    if (options->list) {
+    bool server_utility = options->list
+                        || options->wireless_setup
+                        || options->connection_health
+                        || options->device_status
+                        || options->xiaomi_helper
+                        || options->quick_action != SC_QUICK_ACTION_NONE
+                        || options->send_file;
+
+    if (server_utility) {
         bool ok = await_for_server(NULL);
         ret = ok ? SCRCPY_EXIT_SUCCESS : SCRCPY_EXIT_FAILURE;
         goto end;
@@ -574,7 +589,8 @@ scrcpy(struct scrcpy_options *options) {
         };
 
         if (!sc_controller_init(&s->controller, s->server.control_socket,
-            &controller_cbs, NULL)) {
+                                options->clipboard_history,
+                                &controller_cbs, NULL)) {
             goto end;
         }
         controller_initialized = true;

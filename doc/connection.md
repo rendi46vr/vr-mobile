@@ -53,6 +53,153 @@ scrcpy
 ```
 
 
+## VR Mobile connect manager
+
+This fork adds a first version of a connect manager:
+
+```bash
+scrcpy --connect-manager
+scrcpy --connect-manager=usb
+scrcpy --connect-manager=wifi
+```
+
+Modes:
+
+ - `auto` (default): prefer one USB device, then one Wi-Fi/TCP/IP device, then
+   the last saved Wi-Fi device.
+ - `usb`: connect only to one USB device.
+ - `wifi`: connect to one Wi-Fi/TCP/IP device, or switch one USB device to
+   TCP/IP mode when needed.
+
+The connect manager prints user-facing status such as `USB connected`,
+`Wi-Fi connected`, `ADB unauthorized`, and `Device offline`. When a Wi-Fi
+connection succeeds, the last Wi-Fi serial or `ip:port` is saved locally for the
+next auto connection attempt.
+
+This is the code foundation for the future one-click UI. For now, it is exposed
+as a command-line option so it can be tested and used from a desktop shortcut or
+launcher.
+
+
+## VR Mobile wireless setup wizard
+
+This fork also adds a first version of the wireless setup wizard:
+
+```bash
+scrcpy --wireless-setup
+```
+
+The wizard:
+
+1. checks that exactly one USB device is connected;
+2. enables or reuses ADB TCP/IP mode on port `5555`;
+3. reconnects to the device over Wi-Fi;
+4. saves the Wi-Fi `ip:port` for the connect manager.
+
+After the wizard succeeds, unplug USB and run:
+
+```bash
+scrcpy --connect-manager
+```
+
+If the Wi-Fi connection fails, verify that the phone and computer can reach each
+other on the network. Some routers or guest networks block peer-to-peer traffic
+between Wi-Fi clients.
+
+
+## VR Mobile reconnect and utilities
+
+This fork includes first command-line foundations for the next VR Mobile UX
+features. These commands are intended to be called by a future native UI, tray
+menu, or dashboard.
+
+Auto reconnect:
+
+```bash
+scrcpy --connect-manager --auto-reconnect
+scrcpy --connect-manager --auto-reconnect=5
+```
+
+When a mirror session exits because the device disconnected, scrcpy waits for
+the configured delay and starts the same session again. A normal user close or
+time limit does not trigger a reconnect.
+
+Connection health:
+
+```bash
+scrcpy --connection-health
+```
+
+This prints detected ADB devices, their states, the last saved Wi-Fi device,
+and practical hints for common states like unauthorized or offline.
+
+Device status panel:
+
+```bash
+scrcpy --connect-manager --device-status
+```
+
+This prints the selected device serial, model, Android version, Wi-Fi IP,
+screen size, battery dump, and storage information.
+
+Xiaomi helper:
+
+```bash
+scrcpy --connect-manager --xiaomi-helper
+```
+
+This detects Xiaomi/Redmi/POCO devices and prints the debugging checklist for
+keyboard and mouse control, including USB Debugging Security Settings.
+
+Quick actions:
+
+```bash
+scrcpy --connect-manager --quick-action=wake
+scrcpy --connect-manager --quick-action=lock
+scrcpy --connect-manager --quick-action=screen-off
+scrcpy --connect-manager --quick-action=screen-on
+scrcpy --connect-manager --quick-action=rotate
+scrcpy --connect-manager --quick-action=screenshot
+scrcpy --connect-manager --quick-action=notification-panel
+scrcpy --connect-manager --quick-action=collapse-panels
+```
+
+The screenshot action saves the image on the phone at
+`/sdcard/Download/VR Phone Mirror/screenshot.png`.
+
+File send:
+
+```bash
+scrcpy --connect-manager --send-file=README.md
+scrcpy --connect-manager --send-file=app-release.apk
+```
+
+Normal files are pushed to `/sdcard/Download/VR Phone Mirror/`. APK files are
+installed with `adb install -r`.
+
+Device profiles:
+
+```bash
+scrcpy --save-profile=xiaomi14 --connect-manager=wifi --max-fps=60 --max-size=1920 --video-codec=h265 --turn-screen-off
+scrcpy --profile=xiaomi14
+scrcpy --profile=xiaomi14 --max-fps=30
+```
+
+Profiles are saved under the VR Mobile config directory, in the `profiles`
+subdirectory. A profile file contains one command-line argument per line.
+Arguments passed after `--profile` override values loaded from the profile.
+
+Clipboard history:
+
+```bash
+scrcpy --connect-manager --clipboard-history
+```
+
+When enabled, incoming device clipboard text is appended to
+`clipboard-history.txt` in the VR Mobile config directory. Clipboard autosync
+still uses the normal scrcpy control channel.
+
+
 ## TCP/IP (wireless)
 
 _Scrcpy_ uses `adb` to communicate with the device, and `adb` can [connect] to a

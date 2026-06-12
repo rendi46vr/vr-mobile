@@ -44,6 +44,7 @@ struct sc_controller_callbacks {
 
 bool
 sc_controller_init(struct sc_controller *controller, sc_socket control_socket,
+                   bool clipboard_history,
                    const struct sc_controller_callbacks *cbs,
                    void *cbs_userdata);
 

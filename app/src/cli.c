@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "device_profile.h"
 #include "options.h"
 #include "util/log.h"
 #include "util/net.h"
@@ -23,13 +24,21 @@ enum {
     OPT_WINDOW_TITLE = 1000,
     OPT_PUSH_TARGET,
     OPT_ALWAYS_ON_TOP,
+    OPT_AUTO_RECONNECT,
+    OPT_CONNECT_MANAGER,
+    OPT_CONNECTION_HEALTH,
     OPT_CROP,
+    OPT_DEVICE_STATUS,
+    OPT_WIRELESS_SETUP,
+    OPT_QUICK_ACTION,
     OPT_RECORD_FORMAT,
     OPT_PREFER_TEXT,
+    OPT_SEND_FILE,
     OPT_WINDOW_X,
     OPT_WINDOW_Y,
     OPT_WINDOW_WIDTH,
     OPT_WINDOW_HEIGHT,
+    OPT_XIAOMI_HELPER,
     OPT_WINDOW_BORDERLESS,
     OPT_MAX_FPS,
     OPT_DISPLAY_ID,
@@ -43,6 +52,7 @@ enum {
     OPT_LEGACY_PASTE,
     OPT_VIDEO_ENCODER,
     OPT_POWER_OFF_ON_CLOSE,
+    OPT_PROFILE,
     OPT_V4L2_SINK,
     OPT_VIDEO_BUFFER,
     OPT_V4L2_BUFFER,
@@ -62,6 +72,7 @@ enum {
     OPT_AUDIO_CODEC,
     OPT_AUDIO_CODEC_OPTIONS,
     OPT_AUDIO_ENCODER,
+    OPT_CLIPBOARD_HISTORY,
     OPT_LIST_ENCODERS,
     OPT_LIST_DISPLAYS,
     OPT_REQUIRE_AUDIO,
@@ -97,6 +108,7 @@ enum {
     OPT_LIST_APPS,
     OPT_START_APP,
     OPT_SCREEN_OFF_TIMEOUT,
+    OPT_SAVE_PROFILE,
     OPT_CAPTURE_ORIENTATION,
     OPT_ANGLE,
     OPT_NO_VD_SYSTEM_DECORATIONS,
@@ -149,6 +161,15 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_ALWAYS_ON_TOP,
         .longopt = "always-on-top",
         .text = "Make scrcpy window always on top (above other windows).",
+    },
+    {
+        .longopt_id = OPT_AUTO_RECONNECT,
+        .longopt = "auto-reconnect",
+        .argdesc = "seconds",
+        .optional_arg = true,
+        .text = "Restart the mirror automatically when the device "
+                "disconnects.\n"
+                "The optional delay is in seconds, default is 3.",
     },
     {
         .longopt_id = OPT_ANGLE,
@@ -338,12 +359,48 @@ static const struct sc_option options[] = {
                 "Default is 0.",
     },
     {
+        .longopt_id = OPT_CLIPBOARD_HISTORY,
+        .longopt = "clipboard-history",
+        .text = "Save incoming device clipboard text to the VR Mobile "
+                "clipboard history file.",
+    },
+    {
+        .longopt_id = OPT_CONNECT_MANAGER,
+        .longopt = "connect-manager",
+        .argdesc = "mode",
+        .optional_arg = true,
+        .text = "Use the VR Mobile connect manager.\n"
+                "Modes: auto (default), usb, wifi.\n"
+                "In auto mode, USB is preferred, then an already connected "
+                "Wi-Fi device, then the last saved Wi-Fi device.\n"
+                "In wifi mode, a USB device is switched to TCP/IP when "
+                "needed.",
+    },
+    {
+        .longopt_id = OPT_CONNECTION_HEALTH,
+        .longopt = "connection-health",
+        .text = "Check ADB connection health and print user-facing hints, "
+                "then exit.",
+    },
+    {
         .longopt_id = OPT_CROP,
         .longopt = "crop",
         .argdesc = "width:height:x:y",
         .text = "Crop the device screen on the server.\n"
                 "The values are expressed in the device natural orientation "
                 "(typically, portrait for a phone, landscape for a tablet).",
+    },
+    {
+        .longopt_id = OPT_DEVICE_STATUS,
+        .longopt = "device-status",
+        .text = "Print a VR Mobile device status panel using ADB, then exit.",
+    },
+    {
+        .longopt_id = OPT_WIRELESS_SETUP,
+        .longopt = "wireless-setup",
+        .text = "Run the VR Mobile wireless setup wizard.\n"
+                "It requires one USB device, enables/reuses ADB TCP/IP mode, "
+                "connects over Wi-Fi, saves the Wi-Fi address, then exits.",
     },
     {
         .shortopt = 'd',
@@ -758,6 +815,24 @@ static const struct sc_option options[] = {
                 "It can be started or stopped at any time with MOD+i.",
     },
     {
+        .longopt_id = OPT_PROFILE,
+        .longopt = "profile",
+        .argdesc = "name",
+        .text = "Load a VR Mobile device profile before parsing the current "
+                "command.\n"
+                "User-provided options after --profile override profile "
+                "values.",
+    },
+    {
+        .longopt_id = OPT_QUICK_ACTION,
+        .longopt = "quick-action",
+        .argdesc = "action",
+        .text = "Run a one-shot device quick action, then exit.\n"
+                "Actions: lock, wake, screen-off, screen-on, rotate, "
+                "screenshot, notification-panel, settings-panel, "
+                "collapse-panels.",
+    },
+    {
         .longopt_id = OPT_PUSH_TARGET,
         .longopt = "push-target",
         .argdesc = "path",
@@ -841,11 +916,25 @@ static const struct sc_option options[] = {
         .text = "Turn the device screen off immediately.",
     },
     {
+        .longopt_id = OPT_SEND_FILE,
+        .longopt = "send-file",
+        .argdesc = "file",
+        .text = "Send a file to /sdcard/Download/VR Phone Mirror, or install "
+                "it if it is an APK, then exit.",
+    },
+    {
         .longopt_id = OPT_SCREEN_OFF_TIMEOUT,
         .longopt = "screen-off-timeout",
         .argdesc = "seconds",
         .text = "Set the screen off timeout while scrcpy is running (restore "
                 "the initial value on exit).",
+    },
+    {
+        .longopt_id = OPT_SAVE_PROFILE,
+        .longopt = "save-profile",
+        .argdesc = "name",
+        .text = "Save the current command-line options as a VR Mobile device "
+                "profile, then exit.",
     },
     {
         .longopt_id = OPT_SHORTCUT_MOD,
@@ -1004,6 +1093,12 @@ static const struct sc_option options[] = {
         .longopt = "stay-awake",
         .text = "Keep the device on while scrcpy is running, when the device "
                 "is plugged in.",
+    },
+    {
+        .longopt_id = OPT_XIAOMI_HELPER,
+        .longopt = "xiaomi-helper",
+        .text = "Detect Xiaomi/Redmi/POCO devices and print debugging "
+                "instructions for keyboard/mouse control, then exit.",
     },
     {
         .longopt_id = OPT_WINDOW_BORDERLESS,
@@ -2302,6 +2397,98 @@ parse_pause_on_exit(const char *s, enum sc_pause_on_exit *pause_on_exit) {
 }
 
 static bool
+parse_connect_manager(const char *s, enum sc_connect_manager_mode *mode) {
+    if (!s || !strcmp(s, "auto")) {
+        *mode = SC_CONNECT_MANAGER_AUTO;
+        return true;
+    }
+
+    if (!strcmp(s, "usb")) {
+        *mode = SC_CONNECT_MANAGER_USB;
+        return true;
+    }
+
+    if (!strcmp(s, "wifi")) {
+        *mode = SC_CONNECT_MANAGER_WIFI;
+        return true;
+    }
+
+    LOGE("Unsupported connect manager mode: %s (expected auto, usb or wifi)",
+         s);
+    return false;
+}
+
+static bool
+parse_auto_reconnect_delay(const char *s, uint16_t *delay) {
+    if (!s) {
+        *delay = 3;
+        return true;
+    }
+
+    long value;
+    if (!parse_integer_arg(s, &value, false, 1, 3600,
+                           "auto reconnect delay")) {
+        return false;
+    }
+
+    *delay = (uint16_t) value;
+    return true;
+}
+
+static bool
+parse_quick_action(const char *s, enum sc_quick_action *action) {
+    if (!strcmp(s, "lock")) {
+        *action = SC_QUICK_ACTION_LOCK;
+        return true;
+    }
+
+    if (!strcmp(s, "wake")) {
+        *action = SC_QUICK_ACTION_WAKE;
+        return true;
+    }
+
+    if (!strcmp(s, "screen-off")) {
+        *action = SC_QUICK_ACTION_SCREEN_OFF;
+        return true;
+    }
+
+    if (!strcmp(s, "screen-on")) {
+        *action = SC_QUICK_ACTION_SCREEN_ON;
+        return true;
+    }
+
+    if (!strcmp(s, "rotate")) {
+        *action = SC_QUICK_ACTION_ROTATE;
+        return true;
+    }
+
+    if (!strcmp(s, "screenshot")) {
+        *action = SC_QUICK_ACTION_SCREENSHOT;
+        return true;
+    }
+
+    if (!strcmp(s, "notification-panel")) {
+        *action = SC_QUICK_ACTION_NOTIFICATION_PANEL;
+        return true;
+    }
+
+    if (!strcmp(s, "settings-panel")) {
+        *action = SC_QUICK_ACTION_SETTINGS_PANEL;
+        return true;
+    }
+
+    if (!strcmp(s, "collapse-panels")) {
+        *action = SC_QUICK_ACTION_COLLAPSE_PANELS;
+        return true;
+    }
+
+    LOGE("Unsupported quick action: %s (expected lock, wake, screen-off, "
+         "screen-on, rotate, screenshot, notification-panel, settings-panel "
+         "or collapse-panels)", s);
+    return false;
+}
+
+static bool
 parse_mouse_binding(char c, enum sc_mouse_binding *b) {
     switch (c) {
         case '+':
@@ -2686,8 +2873,32 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_AUDIO_ENCODER:
                 opts->audio_encoder = optarg;
                 break;
+            case OPT_CLIPBOARD_HISTORY:
+                opts->clipboard_history = true;
+                break;
             case OPT_FORCE_ADB_FORWARD:
                 opts->force_adb_forward = true;
+                break;
+            case OPT_AUTO_RECONNECT:
+                opts->auto_reconnect = true;
+                if (!parse_auto_reconnect_delay(optarg,
+                                                &opts->auto_reconnect_delay)) {
+                    return false;
+                }
+                break;
+            case OPT_CONNECT_MANAGER:
+                if (!parse_connect_manager(optarg, &opts->connect_manager)) {
+                    return false;
+                }
+                break;
+            case OPT_CONNECTION_HEALTH:
+                opts->connection_health = true;
+                break;
+            case OPT_WIRELESS_SETUP:
+                opts->wireless_setup = true;
+                break;
+            case OPT_DEVICE_STATUS:
+                opts->device_status = true;
                 break;
             case OPT_DISABLE_SCREENSAVER:
                 opts->disable_screensaver = true;
@@ -2702,6 +2913,9 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case OPT_POWER_OFF_ON_CLOSE:
                 opts->power_off_on_close = true;
+                break;
+            case OPT_PROFILE:
+                // Already handled before normal option parsing.
                 break;
             case OPT_VIDEO_BUFFER:
                 if (!parse_buffering_time(optarg, &opts->video_buffer)) {
@@ -2732,6 +2946,11 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case OPT_PRINT_FPS:
                 opts->start_fps_counter = true;
+                break;
+            case OPT_QUICK_ACTION:
+                if (!parse_quick_action(optarg, &opts->quick_action)) {
+                    return false;
+                }
                 break;
             case OPT_VIDEO_CODEC:
                 if (!parse_video_codec(optarg, &opts->video_codec)) {
@@ -2877,6 +3096,12 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                     return false;
                 }
                 break;
+            case OPT_SEND_FILE:
+                opts->send_file = optarg;
+                break;
+            case OPT_SAVE_PROFILE:
+                // Already handled before normal option parsing.
+                break;
             case OPT_ANGLE:
                 opts->angle = optarg;
                 break;
@@ -2914,6 +3139,9 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                     return false;
                 }
                 break;
+            case OPT_XIAOMI_HELPER:
+                opts->xiaomi_helper = true;
+                break;
             case 'x':
                 opts->flex_display = true;
                 break;
@@ -2931,6 +3159,52 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
     // If a TCP/IP address is provided, then tcpip must be enabled
     assert(opts->tcpip || !opts->tcpip_dst);
+
+    bool device_utility = opts->device_status
+                        || opts->xiaomi_helper
+                        || opts->quick_action != SC_QUICK_ACTION_NONE
+                        || !!opts->send_file;
+    bool utility_command = opts->connection_health || device_utility;
+
+    if (opts->connection_health
+            && (opts->connect_manager != SC_CONNECT_MANAGER_DISABLED
+                || opts->serial || opts->select_tcpip || opts->select_usb
+                || opts->tcpip || opts->wireless_setup || opts->list
+                || device_utility)) {
+        LOGE("Cannot use --connection-health together with device selectors, "
+             "--connect-manager, --tcpip, --wireless-setup, --list-* or other "
+             "utility commands");
+        return false;
+    }
+
+    if (device_utility && opts->list) {
+        LOGE("Cannot use VR Mobile utility commands together with --list-*");
+        return false;
+    }
+
+    if (opts->connect_manager != SC_CONNECT_MANAGER_DISABLED
+            && (opts->serial || opts->select_tcpip || opts->select_usb
+                || opts->tcpip || opts->wireless_setup)) {
+        LOGE("Cannot use --connect-manager together with --serial, "
+             "--select-usb, --select-tcpip, --tcpip or --wireless-setup");
+        return false;
+    }
+
+    if (opts->wireless_setup
+            && (opts->serial || opts->select_tcpip || opts->select_usb
+                || opts->tcpip || opts->list || utility_command)) {
+        LOGE("Cannot use --wireless-setup together with --serial, "
+             "--select-usb, --select-tcpip, --tcpip, --list-* or utility "
+             "commands");
+        return false;
+    }
+
+    if (opts->auto_reconnect
+            && (opts->wireless_setup || opts->list || utility_command)) {
+        LOGE("Cannot use --auto-reconnect together with --wireless-setup, "
+             "--list-* or utility commands");
+        return false;
+    }
 
     unsigned selectors = !!opts->serial
                        + !!opts->tcpip_dst
@@ -2953,6 +3227,21 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 #ifdef HAVE_V4L2
     v4l2 = !!opts->v4l2_device;
 #endif
+
+    if (opts->wireless_setup && otg) {
+        LOGE("Cannot use --wireless-setup in OTG mode");
+        return false;
+    }
+
+    if (opts->auto_reconnect && otg) {
+        LOGE("Cannot use --auto-reconnect in OTG mode");
+        return false;
+    }
+
+    if (utility_command && otg) {
+        LOGE("Cannot use VR Mobile utility commands in OTG mode");
+        return false;
+    }
 
     if (!opts->window) {
         // Without window, there cannot be any video playback
@@ -2982,7 +3271,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
         opts->audio = false;
     }
 
-    if (!opts->video && !opts->audio && !opts->control && !otg) {
+    if (!opts->video && !opts->audio && !opts->control && !otg
+            && !utility_command) {
         LOGE("No video, no audio, no control, no OTG: nothing to do");
         return false;
     }
@@ -3523,23 +3813,224 @@ scrcpy_launched_by_double_click(void) {
 }
 #endif
 
+static bool
+sc_cli_arg_is_help_or_version(const char *arg) {
+    return !strcmp(arg, "-h")
+        || !strcmp(arg, "--help")
+        || !strcmp(arg, "-v")
+        || !strcmp(arg, "--version");
+}
+
+static bool
+sc_cli_has_help_or_version(int argc, char *argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (sc_cli_arg_is_help_or_version(argv[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool
+sc_cli_extract_long_option_value(int argc, char *argv[], bool *skip,
+                                 const char *longopt, const char **value) {
+    size_t longopt_len = strlen(longopt);
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], longopt)
+                && (strncmp(argv[i], longopt, longopt_len)
+                    || argv[i][longopt_len] != '=')) {
+            continue;
+        }
+
+        if (*value) {
+            LOGE("Option %s may only be passed once", longopt);
+            return false;
+        }
+
+        if (!strcmp(argv[i], longopt)) {
+            if (i + 1 >= argc) {
+                LOGE("Missing argument for %s", longopt);
+                return false;
+            }
+            *value = argv[i + 1];
+            skip[i] = true;
+            skip[i + 1] = true;
+            ++i;
+        } else {
+            *value = &argv[i][longopt_len + 1];
+            skip[i] = true;
+        }
+
+        if (!**value) {
+            LOGE("Empty argument for %s", longopt);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static char **
+sc_cli_build_profile_argv(int argc, char *argv[], const bool *skip,
+                          const struct sc_device_profile_args *profile,
+                          int *out_argc) {
+    int user_argc = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (!skip[i]) {
+            ++user_argc;
+        }
+    }
+
+    int merged_argc = 1 + profile->argc + user_argc;
+    char **merged_argv = malloc((merged_argc + 1) * sizeof(*merged_argv));
+    if (!merged_argv) {
+        LOG_OOM();
+        return NULL;
+    }
+
+    int idx = 0;
+    merged_argv[idx++] = argv[0];
+    for (int i = 0; i < profile->argc; ++i) {
+        merged_argv[idx++] = profile->argv[i];
+    }
+    for (int i = 1; i < argc; ++i) {
+        if (!skip[i]) {
+            merged_argv[idx++] = argv[i];
+        }
+    }
+    assert(idx == merged_argc);
+    merged_argv[idx] = NULL;
+
+    *out_argc = merged_argc;
+    return merged_argv;
+}
+
+static char **
+sc_cli_build_save_profile_argv(int argc, char *argv[], const bool *skip,
+                               int *out_argc) {
+    int save_argc = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (!skip[i]) {
+            ++save_argc;
+        }
+    }
+
+    char **save_argv = malloc(save_argc * sizeof(*save_argv));
+    if (save_argc && !save_argv) {
+        LOG_OOM();
+        return NULL;
+    }
+
+    int idx = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (!skip[i]) {
+            save_argv[idx++] = argv[i];
+        }
+    }
+    assert(idx == save_argc);
+
+    *out_argc = save_argc;
+    return save_argv;
+}
+
 bool
 scrcpy_parse_args(struct scrcpy_cli_args *args, int argc, char *argv[]) {
+    bool *skip = NULL;
+    char **profile_argv = NULL;
+    char **save_argv = NULL;
+    int profile_argc = argc;
+    int save_argc = 0;
+    const char *profile_name = NULL;
+    const char *save_profile_name = NULL;
+    bool use_profile_argv = false;
+    bool save_profile = false;
+
+    if (!sc_cli_has_help_or_version(argc, argv)) {
+        skip = calloc(argc, sizeof(*skip));
+        if (!skip) {
+            LOG_OOM();
+            return false;
+        }
+
+        bool ok =
+            sc_cli_extract_long_option_value(argc, argv, skip, "--profile",
+                                             &profile_name)
+            && sc_cli_extract_long_option_value(argc, argv, skip,
+                                                "--save-profile",
+                                                &save_profile_name);
+        if (!ok) {
+            free(skip);
+            return false;
+        }
+
+        if (profile_name && save_profile_name) {
+            LOGE("Cannot use --profile together with --save-profile");
+            free(skip);
+            return false;
+        }
+
+        struct sc_device_profile_args profile = {0};
+        if (profile_name) {
+            if (!sc_device_profile_load(profile_name, &profile)) {
+                free(skip);
+                return false;
+            }
+
+            profile_argv =
+                sc_cli_build_profile_argv(argc, argv, skip, &profile,
+                                          &profile_argc);
+            if (!profile_argv) {
+                free(skip);
+                return false;
+            }
+            use_profile_argv = true;
+            // Keep profile.argv alive: parsed options may point to its strings.
+        } else if (save_profile_name) {
+            profile_argv =
+                sc_cli_build_profile_argv(argc, argv, skip, &profile,
+                                          &profile_argc);
+            save_argv = sc_cli_build_save_profile_argv(argc, argv, skip,
+                                                       &save_argc);
+            if (!profile_argv || (save_argc && !save_argv)) {
+                free(skip);
+                free(profile_argv);
+                free(save_argv);
+                return false;
+            }
+            use_profile_argv = true;
+            save_profile = true;
+        }
+    }
+
+    int parsed_argc = use_profile_argv ? profile_argc : argc;
+    char **parsed_argv = use_profile_argv ? profile_argv : argv;
+
     struct sc_getopt_adapter adapter;
     if (!sc_getopt_adapter_init(&adapter)) {
         LOGW("Could not create getopt adapter");
+        free(skip);
+        free(profile_argv);
+        free(save_argv);
         return false;
     }
 
-    bool ret = parse_args_with_getopt(args, argc, argv, adapter.optstring,
-                                      adapter.longopts);
+    bool ret = parse_args_with_getopt(args, parsed_argc, parsed_argv,
+                                      adapter.optstring, adapter.longopts);
 
     sc_getopt_adapter_destroy(&adapter);
+
+    if (ret && save_profile) {
+        assert(save_profile_name);
+        ret = sc_device_profile_save(save_profile_name, save_argc, save_argv);
+        args->profile_saved = ret;
+    }
 
     if (!ret && args->pause_on_exit == SC_PAUSE_ON_EXIT_UNDEFINED) {
         // Check if "--pause-on-exit" is present in the arguments list, because
         // it must be taken into account even if command line parsing failed
-        args->pause_on_exit = sc_get_pause_on_exit(argc, argv);
+        args->pause_on_exit = sc_get_pause_on_exit(parsed_argc, parsed_argv);
     }
 
     if (args->pause_on_exit == SC_PAUSE_ON_EXIT_UNDEFINED) {
@@ -3553,5 +4044,8 @@ scrcpy_parse_args(struct scrcpy_cli_args *args, int argc, char *argv[]) {
 
     assert(args->pause_on_exit != SC_PAUSE_ON_EXIT_UNDEFINED);
 
+    free(skip);
+    free(profile_argv);
+    free(save_argv);
     return ret;
 }

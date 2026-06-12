@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <sys/types.h>
 
 #include "adb/adb.h"
+#include "connect_manager.h"
 #include "util/env.h"
 #include "util/file.h"
 #include "util/log.h"
@@ -945,6 +947,472 @@ sc_server_configure_tcpip_unknown_address(struct sc_server *server,
 }
 
 static void
+sc_server_log_connect_manager_error(enum sc_connect_manager_status status) {
+    switch (status) {
+        case SC_CONNECT_MANAGER_STATUS_ADB_UNAUTHORIZED:
+            LOGE("ADB unauthorized: check the phone screen, allow USB "
+                 "debugging, then retry.");
+            break;
+        case SC_CONNECT_MANAGER_STATUS_DEVICE_OFFLINE:
+            LOGE("Device offline: reconnect USB or Wi-Fi, then retry.");
+            break;
+        case SC_CONNECT_MANAGER_STATUS_MULTIPLE_DEVICES:
+            LOGE("Multiple devices found. Use --connect-manager=usb or "
+                 "--connect-manager=wifi, or disconnect extra devices.");
+            break;
+        case SC_CONNECT_MANAGER_STATUS_NO_DEVICE:
+            LOGE("No Android device found. Connect via USB, or keep the last "
+                 "Wi-Fi device on the same network.");
+            break;
+        default:
+            LOGE("Connect manager failed: %s",
+                 sc_connect_manager_status_get_name(status));
+            break;
+    }
+}
+
+static bool
+sc_server_configure_connect_manager(struct sc_server *server) {
+    struct sc_vec_adb_devices devices = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_list_devices(&server->intr, 0, &devices);
+    if (!ok) {
+        LOGE("Connect manager could not list ADB devices");
+        return false;
+    }
+
+    char *last_wifi_serial = sc_connect_manager_load_last_wifi_serial();
+
+    struct sc_connect_manager_result result;
+    sc_connect_manager_select(devices.data, devices.size,
+                              server->params.connect_manager,
+                              last_wifi_serial, &result);
+
+    LOGI("Connect manager status: %s",
+         sc_connect_manager_status_get_name(result.status));
+
+    switch (result.action) {
+        case SC_CONNECT_MANAGER_ACTION_USE_SERIAL:
+            assert(result.serial);
+            server->serial = strdup(result.serial);
+            if (!server->serial) {
+                LOG_OOM();
+                ok = false;
+                break;
+            }
+
+            if (sc_adb_device_get_type(server->serial)
+                    == SC_ADB_DEVICE_TYPE_TCPIP) {
+                sc_connect_manager_save_last_wifi_serial(server->serial);
+            }
+            ok = true;
+            break;
+        case SC_CONNECT_MANAGER_ACTION_SWITCH_USB_TO_WIFI:
+            assert(result.serial);
+            ok = sc_server_configure_tcpip_unknown_address(server,
+                                                           result.serial);
+            if (ok) {
+                assert(server->serial);
+                sc_connect_manager_save_last_wifi_serial(server->serial);
+                LOGI("Connect manager status: Wi-Fi connected");
+            }
+            break;
+        case SC_CONNECT_MANAGER_ACTION_CONNECT_LAST_WIFI:
+            assert(result.serial);
+            ok = sc_server_configure_tcpip_known_address(server, result.serial,
+                                                         false);
+            if (ok) {
+                assert(server->serial);
+                sc_connect_manager_save_last_wifi_serial(server->serial);
+                LOGI("Connect manager status: Wi-Fi connected");
+            }
+            break;
+        case SC_CONNECT_MANAGER_ACTION_ERROR:
+            sc_server_log_connect_manager_error(result.status);
+            ok = false;
+            break;
+        default:
+            assert(!"Unexpected connect manager action");
+            ok = false;
+            break;
+    }
+
+    free(last_wifi_serial);
+    sc_adb_devices_destroy(&devices);
+    return ok;
+}
+
+static bool
+sc_server_run_wireless_setup(struct sc_server *server) {
+    LOGI("Wireless setup wizard:");
+    LOGI("[1/4] Checking USB device...");
+
+    struct sc_vec_adb_devices devices = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_list_devices(&server->intr, 0, &devices);
+    if (!ok) {
+        LOGE("Wireless setup could not list ADB devices");
+        return false;
+    }
+
+    struct sc_connect_manager_result result;
+    sc_connect_manager_select(devices.data, devices.size,
+                              SC_CONNECT_MANAGER_USB, NULL, &result);
+    if (result.action != SC_CONNECT_MANAGER_ACTION_USE_SERIAL) {
+        sc_server_log_connect_manager_error(result.status);
+        sc_adb_devices_destroy(&devices);
+        return false;
+    }
+
+    assert(result.serial);
+    LOGI("[2/4] Enabling wireless mode from USB device %s...",
+         result.serial);
+    char *ip_port = sc_server_switch_to_tcpip(server, result.serial);
+    if (!ip_port) {
+        sc_adb_devices_destroy(&devices);
+        return false;
+    }
+
+    LOGI("[3/4] Reconnecting over Wi-Fi at %s...", ip_port);
+    ok = sc_server_connect_to_tcpip(server, ip_port, false);
+    if (!ok) {
+        free(ip_port);
+        sc_adb_devices_destroy(&devices);
+        return false;
+    }
+
+    server->serial = ip_port;
+    sc_connect_manager_save_last_wifi_serial(server->serial);
+
+    LOGI("[4/4] Wireless setup complete.");
+    LOGI("You may unplug USB and run: scrcpy --connect-manager");
+
+    sc_adb_devices_destroy(&devices);
+    return true;
+}
+
+static bool
+sc_server_contains_ignore_case(const char *s, const char *needle) {
+    size_t needle_len = strlen(needle);
+    if (!needle_len) {
+        return true;
+    }
+
+    for (; *s; ++s) {
+        size_t i;
+        for (i = 0; i < needle_len; ++i) {
+            if (!s[i]) {
+                return false;
+            }
+            if (tolower((unsigned char) s[i])
+                    != tolower((unsigned char) needle[i])) {
+                break;
+            }
+        }
+        if (i == needle_len) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool
+sc_server_path_has_extension(const char *path, const char *ext) {
+    size_t path_len = strlen(path);
+    size_t ext_len = strlen(ext);
+    if (path_len < ext_len) {
+        return false;
+    }
+
+    const char *suffix = &path[path_len - ext_len];
+    for (size_t i = 0; i < ext_len; ++i) {
+        if (tolower((unsigned char) suffix[i])
+                != tolower((unsigned char) ext[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void
+sc_server_log_device_state_hint(const struct sc_adb_device *device) {
+    assert(device->state);
+
+    if (!strcmp(device->state, "device")) {
+        enum sc_adb_device_type type = sc_adb_device_get_type(device->serial);
+        LOGI("  OK: %s device is ready",
+             type == SC_ADB_DEVICE_TYPE_TCPIP ? "Wi-Fi" : "USB");
+    } else if (!strcmp(device->state, "unauthorized")) {
+        LOGE("  ADB unauthorized: check the phone screen, choose Allow USB "
+             "debugging, then retry.");
+    } else if (!strcmp(device->state, "offline")) {
+        LOGE("  Device offline: reconnect USB/Wi-Fi, then run adb reconnect "
+             "or retry.");
+    } else {
+        LOGW("  Unknown ADB state '%s': reconnect the device if commands fail.",
+             device->state);
+    }
+}
+
+static bool
+sc_server_run_connection_health(struct sc_server *server) {
+    LOGI("Connection health:");
+
+    struct sc_vec_adb_devices devices = SC_VECTOR_INITIALIZER;
+    bool ok = sc_adb_list_devices(&server->intr, 0, &devices);
+    if (!ok) {
+        LOGE("Could not read ADB devices. Check that adb is installed and "
+             "accessible.");
+        return false;
+    }
+
+    if (!devices.size) {
+        LOGE("No Android device found.");
+        LOGE("Connect the phone via USB, enable USB debugging, or keep the "
+             "last Wi-Fi device on the same network.");
+    }
+
+    for (size_t i = 0; i < devices.size; ++i) {
+        const struct sc_adb_device *device = &devices.data[i];
+        LOGI("- %s [%s]", device->serial, device->state);
+        sc_server_log_device_state_hint(device);
+    }
+
+    char *last_wifi_serial = sc_connect_manager_load_last_wifi_serial();
+    if (last_wifi_serial) {
+        LOGI("Last saved Wi-Fi device: %s", last_wifi_serial);
+        LOGI("Retry it with: scrcpy --connect-manager");
+        free(last_wifi_serial);
+    }
+
+    sc_adb_devices_destroy(&devices);
+    return true;
+}
+
+static bool
+sc_server_run_device_status(struct sc_server *server, const char *serial) {
+    LOGI("Device status panel:");
+    LOGI("ADB serial: %s", serial);
+
+    char *manufacturer =
+        sc_adb_getprop(&server->intr, serial, "ro.product.manufacturer",
+                       SC_ADB_SILENT);
+    char *model =
+        sc_adb_getprop(&server->intr, serial, "ro.product.model",
+                       SC_ADB_SILENT);
+    char *android =
+        sc_adb_getprop(&server->intr, serial, "ro.build.version.release",
+                       SC_ADB_SILENT);
+
+    LOGI("Device: %s %s (Android %s)",
+         manufacturer ? manufacturer : "Unknown",
+         model ? model : "Unknown",
+         android ? android : "Unknown");
+
+    free(manufacturer);
+    free(model);
+    free(android);
+
+    char *ip = sc_adb_get_device_ip(&server->intr, serial, SC_ADB_SILENT);
+    if (ip) {
+        LOGI("Wi-Fi IP: %s", ip);
+        free(ip);
+    } else {
+        LOGW("Wi-Fi IP: not detected");
+    }
+
+    LOGI("Screen resolution:");
+    bool ok = sc_adb_shell(&server->intr, serial, "wm size", 0);
+
+    LOGI("Battery:");
+    ok &= sc_adb_shell(&server->intr, serial, "dumpsys battery", 0);
+
+    LOGI("Storage:");
+    ok &= sc_adb_shell(&server->intr, serial, "df -h /sdcard", 0);
+
+    return ok;
+}
+
+static bool
+sc_server_run_xiaomi_helper(struct sc_server *server, const char *serial) {
+    char *manufacturer =
+        sc_adb_getprop(&server->intr, serial, "ro.product.manufacturer",
+                       SC_ADB_SILENT);
+    char *brand =
+        sc_adb_getprop(&server->intr, serial, "ro.product.brand",
+                       SC_ADB_SILENT);
+    char *model =
+        sc_adb_getprop(&server->intr, serial, "ro.product.model",
+                       SC_ADB_SILENT);
+
+    bool xiaomi = false;
+    if (manufacturer) {
+        xiaomi |= sc_server_contains_ignore_case(manufacturer, "xiaomi");
+        xiaomi |= sc_server_contains_ignore_case(manufacturer, "redmi");
+        xiaomi |= sc_server_contains_ignore_case(manufacturer, "poco");
+    }
+    if (brand) {
+        xiaomi |= sc_server_contains_ignore_case(brand, "xiaomi");
+        xiaomi |= sc_server_contains_ignore_case(brand, "redmi");
+        xiaomi |= sc_server_contains_ignore_case(brand, "poco");
+    }
+
+    LOGI("Xiaomi helper mode:");
+    LOGI("Device: %s %s %s",
+         manufacturer ? manufacturer : "Unknown",
+         brand ? brand : "Unknown",
+         model ? model : "Unknown");
+
+    if (xiaomi) {
+        LOGI("Xiaomi/Redmi/POCO device detected.");
+    } else {
+        LOGW("This device does not look like Xiaomi/Redmi/POCO. Showing the "
+             "checklist anyway because it is harmless.");
+    }
+
+    LOGI("Checklist:");
+    LOGI("  1. Enable Developer Options.");
+    LOGI("  2. Enable USB Debugging.");
+    LOGI("  3. Enable USB Debugging (Security Settings).");
+    LOGI("  4. Reboot the phone if keyboard/mouse control is still blocked.");
+    LOGI("Test control with: scrcpy --connect-manager --quick-action=wake");
+
+    free(manufacturer);
+    free(brand);
+    free(model);
+    return true;
+}
+
+static bool
+sc_server_run_send_file(struct sc_server *server, const char *serial,
+                        const char *file) {
+#define VR_MOBILE_PUSH_TARGET "/sdcard/Download/VR Phone Mirror/"
+    assert(file);
+
+    if (sc_server_path_has_extension(file, ".apk")) {
+        LOGI("Installing APK: %s", file);
+        return sc_adb_install(&server->intr, serial, file, 0);
+    }
+
+    LOGI("Preparing device folder: " VR_MOBILE_PUSH_TARGET);
+    bool ok = sc_adb_shell(&server->intr, serial,
+                           "mkdir -p '/sdcard/Download/VR Phone Mirror'",
+                           0);
+    if (!ok) {
+        return false;
+    }
+
+    LOGI("Sending file: %s", file);
+    return sc_adb_push(&server->intr, serial, file, VR_MOBILE_PUSH_TARGET, 0);
+#undef VR_MOBILE_PUSH_TARGET
+}
+
+static const char *
+sc_server_quick_action_get_name(enum sc_quick_action action) {
+    switch (action) {
+        case SC_QUICK_ACTION_LOCK:
+            return "lock";
+        case SC_QUICK_ACTION_WAKE:
+            return "wake";
+        case SC_QUICK_ACTION_SCREEN_OFF:
+            return "screen-off";
+        case SC_QUICK_ACTION_SCREEN_ON:
+            return "screen-on";
+        case SC_QUICK_ACTION_ROTATE:
+            return "rotate";
+        case SC_QUICK_ACTION_SCREENSHOT:
+            return "screenshot";
+        case SC_QUICK_ACTION_NOTIFICATION_PANEL:
+            return "notification-panel";
+        case SC_QUICK_ACTION_SETTINGS_PANEL:
+            return "settings-panel";
+        case SC_QUICK_ACTION_COLLAPSE_PANELS:
+            return "collapse-panels";
+        case SC_QUICK_ACTION_NONE:
+        default:
+            return "none";
+    }
+}
+
+static bool
+sc_server_run_quick_action(struct sc_server *server, const char *serial) {
+    enum sc_quick_action action = server->params.quick_action;
+    LOGI("Running quick action: %s",
+         sc_server_quick_action_get_name(action));
+
+    const char *command;
+    switch (action) {
+        case SC_QUICK_ACTION_LOCK:
+            command = "input keyevent 26";
+            break;
+        case SC_QUICK_ACTION_WAKE:
+            command = "input keyevent 224";
+            break;
+        case SC_QUICK_ACTION_SCREEN_OFF:
+            command = "input keyevent 223";
+            break;
+        case SC_QUICK_ACTION_SCREEN_ON:
+            command = "input keyevent 224";
+            break;
+        case SC_QUICK_ACTION_ROTATE:
+            command = "settings put system accelerometer_rotation 0; "
+                      "settings put system user_rotation 1";
+            break;
+        case SC_QUICK_ACTION_SCREENSHOT:
+            command = "mkdir -p '/sdcard/Download/VR Phone Mirror' && "
+                      "screencap -p "
+                      "'/sdcard/Download/VR Phone Mirror/screenshot.png'";
+            break;
+        case SC_QUICK_ACTION_NOTIFICATION_PANEL:
+            command = "cmd statusbar expand-notifications";
+            break;
+        case SC_QUICK_ACTION_SETTINGS_PANEL:
+            command = "cmd statusbar expand-settings";
+            break;
+        case SC_QUICK_ACTION_COLLAPSE_PANELS:
+            command = "cmd statusbar collapse";
+            break;
+        case SC_QUICK_ACTION_NONE:
+        default:
+            assert(!"Unexpected quick action");
+            return false;
+    }
+
+    bool ok = sc_adb_shell(&server->intr, serial, command, 0);
+    if (ok && action == SC_QUICK_ACTION_SCREENSHOT) {
+        LOGI("Screenshot saved on device: "
+             "/sdcard/Download/VR Phone Mirror/screenshot.png");
+    }
+
+    return ok;
+}
+
+static bool
+sc_server_run_vr_mobile_utilities(struct sc_server *server,
+                                  const char *serial) {
+    bool ok = true;
+
+    if (server->params.device_status) {
+        ok &= sc_server_run_device_status(server, serial);
+    }
+
+    if (server->params.xiaomi_helper) {
+        ok &= sc_server_run_xiaomi_helper(server, serial);
+    }
+
+    if (server->params.send_file) {
+        ok &= sc_server_run_send_file(server, serial,
+                                      server->params.send_file);
+    }
+
+    if (server->params.quick_action != SC_QUICK_ACTION_NONE) {
+        ok &= sc_server_run_quick_action(server, serial);
+    }
+
+    return ok;
+}
+
+static void
 sc_server_kill_adb_if_requested(struct sc_server *server) {
     if (server->params.kill_adb_on_close) {
         LOGI("Killing adb server...");
@@ -971,16 +1439,41 @@ run_server(void *data) {
     // params->tcpip_dst implies params->tcpip
     assert(!params->tcpip_dst || params->tcpip);
 
-    // If tcpip_dst parameter is given, then it must connect to this address.
-    // Therefore, the device is unknown, so serial is meaningless at this point.
-    assert(!params->req_serial || !params->tcpip_dst);
+    if (params->connection_health) {
+        ok = sc_server_run_connection_health(server);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+        // Wake up await_for_server()
+        server->cbs->on_connected(server, server->cbs_userdata);
+        return 0;
+    }
 
-    // A device must be selected via a serial in all cases except when --tcpip=
-    // is called with a parameter (in that case, the device may initially not
-    // exist, and scrcpy will execute "adb connect").
-    bool need_initial_serial = !params->tcpip_dst;
-
-    if (need_initial_serial) {
+    if (params->wireless_setup) {
+        ok = sc_server_run_wireless_setup(server);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+        // Wake up await_for_server()
+        server->cbs->on_connected(server, server->cbs_userdata);
+        return 0;
+    } else if (params->connect_manager != SC_CONNECT_MANAGER_DISABLED) {
+        ok = sc_server_configure_connect_manager(server);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+    } else if (params->tcpip_dst) {
+        // If the user passed a '+' (--tcpip=+ip), then disconnect first
+        const char *tcpip_dst = params->tcpip_dst;
+        bool plus = tcpip_dst[0] == '+';
+        if (plus) {
+            ++tcpip_dst;
+        }
+        ok = sc_server_configure_tcpip_known_address(server, tcpip_dst, plus);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+    } else {
         // At most one of the 3 following parameters may be set
         assert(!!params->req_serial
                + params->select_usb
@@ -1027,22 +1520,24 @@ run_server(void *data) {
             device.serial = NULL;
             sc_adb_device_destroy(&device);
         }
-    } else {
-        // If the user passed a '+' (--tcpip=+ip), then disconnect first
-        const char *tcpip_dst = params->tcpip_dst;
-        bool plus = tcpip_dst[0] == '+';
-        if (plus) {
-            ++tcpip_dst;
-        }
-        ok = sc_server_configure_tcpip_known_address(server, tcpip_dst, plus);
-        if (!ok) {
-            goto error_connection_failed;
-        }
     }
 
     const char *serial = server->serial;
     assert(serial);
     LOGD("Device serial: %s", serial);
+
+    if (params->device_status
+            || params->xiaomi_helper
+            || params->send_file
+            || params->quick_action != SC_QUICK_ACTION_NONE) {
+        ok = sc_server_run_vr_mobile_utilities(server, serial);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+        // Wake up await_for_server()
+        server->cbs->on_connected(server, server->cbs_userdata);
+        return 0;
+    }
 
     ok = push_server(&server->intr, serial);
     if (!ok) {

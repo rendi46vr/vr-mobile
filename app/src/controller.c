@@ -19,6 +19,7 @@ sc_controller_receiver_on_ended(struct sc_receiver *receiver, bool error,
 
 bool
 sc_controller_init(struct sc_controller *controller, sc_socket control_socket,
+                   bool clipboard_history,
                    const struct sc_controller_callbacks *cbs,
                    void *cbs_userdata) {
     sc_vecdeque_init(&controller->queue);
@@ -34,8 +35,8 @@ sc_controller_init(struct sc_controller *controller, sc_socket control_socket,
         .on_ended = sc_controller_receiver_on_ended,
     };
 
-    ok = sc_receiver_init(&controller->receiver, control_socket, &receiver_cbs,
-                          controller);
+    ok = sc_receiver_init(&controller->receiver, control_socket,
+                          clipboard_history, &receiver_cbs, controller);
     if (!ok) {
         sc_vecdeque_destroy(&controller->queue);
         return false;
