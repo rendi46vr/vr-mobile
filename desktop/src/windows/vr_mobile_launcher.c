@@ -47,6 +47,8 @@
 #define WM_VR_DONE (WM_APP + 2)
 #define WM_VR_TRAY (WM_APP + 3)
 
+#define VR_STATUS_DLL_NOT_FOUND 0xC0000135UL
+
 #define MAX_FILE_QUEUE 64
 #define MAX_FILE_PATH_CHARS 32768
 #define MAX_PROFILE_NAME_CHARS 128
@@ -235,6 +237,13 @@ file_exists(const WCHAR *path) {
 }
 
 static bool
+dir_exists(const WCHAR *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES
+        && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static bool
 get_launcher_path(WCHAR *out, size_t out_len) {
     DWORD len = GetModuleFileNameW(NULL, out, (DWORD) out_len);
     return len && len < out_len;
@@ -274,6 +283,118 @@ find_scrcpy_path(WCHAR *out, size_t out_len) {
     }
 
     return false;
+}
+
+static bool
+append_path_dir(WCHAR *buf, size_t buf_len, const WCHAR *dir) {
+    if (!dir_exists(dir)) {
+        return true;
+    }
+
+    size_t used = wcslen(buf);
+    size_t dir_len = wcslen(dir);
+    size_t extra = dir_len + (used ? 1 : 0);
+    if (used + extra + 1 > buf_len) {
+        return false;
+    }
+
+    if (used) {
+        buf[used++] = L';';
+    }
+    memcpy(&buf[used], dir, (dir_len + 1) * sizeof(*buf));
+    return true;
+}
+
+static void
+append_scrcpy_dir(WCHAR *buf, size_t buf_len, const WCHAR *scrcpy_path) {
+    WCHAR dir[MAX_FILE_PATH_CHARS];
+    wcsncpy(dir, scrcpy_path, sizeof(dir) / sizeof(dir[0]) - 1);
+    dir[sizeof(dir) / sizeof(dir[0]) - 1] = L'\0';
+    path_dirname(dir);
+    append_path_dir(buf, buf_len, dir);
+}
+
+static void
+append_platform_tools_dir(WCHAR *buf, size_t buf_len) {
+    WCHAR base[MAX_PATH];
+    WCHAR path[MAX_PATH];
+
+    DWORD len = GetEnvironmentVariableW(L"ANDROID_HOME", base,
+                                        sizeof(base) / sizeof(base[0]));
+    if (len && len < sizeof(base) / sizeof(base[0])) {
+        swprintf(path, sizeof(path) / sizeof(path[0]),
+                 L"%ls\\platform-tools", base);
+        append_path_dir(buf, buf_len, path);
+    }
+
+    len = GetEnvironmentVariableW(L"ANDROID_SDK_ROOT", base,
+                                  sizeof(base) / sizeof(base[0]));
+    if (len && len < sizeof(base) / sizeof(base[0])) {
+        swprintf(path, sizeof(path) / sizeof(path[0]),
+                 L"%ls\\platform-tools", base);
+        append_path_dir(buf, buf_len, path);
+    }
+
+    len = GetEnvironmentVariableW(L"LOCALAPPDATA", base,
+                                  sizeof(base) / sizeof(base[0]));
+    if (len && len < sizeof(base) / sizeof(base[0])) {
+        swprintf(path, sizeof(path) / sizeof(path[0]),
+                 L"%ls\\Android\\Sdk\\platform-tools", base);
+        append_path_dir(buf, buf_len, path);
+    }
+}
+
+static void
+set_adb_env_if_available(void) {
+    WCHAR adb[MAX_PATH];
+    DWORD len = GetEnvironmentVariableW(L"ADB", adb,
+                                        sizeof(adb) / sizeof(adb[0]));
+    if (len && len < sizeof(adb) / sizeof(adb[0])) {
+        return;
+    }
+
+    WCHAR base[MAX_PATH];
+    len = GetEnvironmentVariableW(L"LOCALAPPDATA", base,
+                                  sizeof(base) / sizeof(base[0]));
+    if (!len || len >= sizeof(base) / sizeof(base[0])) {
+        return;
+    }
+
+    swprintf(adb, sizeof(adb) / sizeof(adb[0]),
+             L"%ls\\Android\\Sdk\\platform-tools\\adb.exe", base);
+    if (file_exists(adb)) {
+        SetEnvironmentVariableW(L"ADB", adb);
+    }
+}
+
+static void
+prepare_child_environment(const WCHAR *scrcpy_path) {
+    WCHAR prefix[8192] = L"";
+    append_scrcpy_dir(prefix, sizeof(prefix) / sizeof(prefix[0]), scrcpy_path);
+    append_path_dir(prefix, sizeof(prefix) / sizeof(prefix[0]),
+                    L"C:\\msys64\\mingw64\\bin");
+    append_path_dir(prefix, sizeof(prefix) / sizeof(prefix[0]),
+                    L"C:\\msys64\\ucrt64\\bin");
+    append_path_dir(prefix, sizeof(prefix) / sizeof(prefix[0]),
+                    L"C:\\msys64\\usr\\bin");
+    append_platform_tools_dir(prefix, sizeof(prefix) / sizeof(prefix[0]));
+
+    WCHAR current[MAX_FILE_PATH_CHARS] = L"";
+    GetEnvironmentVariableW(L"PATH", current,
+                            sizeof(current) / sizeof(current[0]));
+
+    WCHAR merged[MAX_FILE_PATH_CHARS];
+    if (prefix[0] && current[0]) {
+        swprintf(merged, sizeof(merged) / sizeof(merged[0]), L"%ls;%ls",
+                 prefix, current);
+    } else if (prefix[0]) {
+        swprintf(merged, sizeof(merged) / sizeof(merged[0]), L"%ls", prefix);
+    } else {
+        return;
+    }
+
+    SetEnvironmentVariableW(L"PATH", merged);
+    set_adb_env_if_available();
 }
 
 static bool
@@ -654,6 +775,8 @@ command_thread(LPVOID userdata) {
 
     PROCESS_INFORMATION process;
     ZeroMemory(&process, sizeof(process));
+
+    prepare_child_environment(runner->scrcpy_path);
 
     BOOL ok = CreateProcessW(runner->scrcpy_path, cmdline, NULL, NULL, TRUE,
                              CREATE_NO_WINDOW, NULL, NULL, &startup, &process);
@@ -1821,6 +1944,14 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                          vr_launcher_command_label(done->command),
                          done->exit_code);
                 append_log_line(message);
+
+                if (done->exit_code == VR_STATUS_DLL_NOT_FOUND) {
+                    append_log_line(L"scrcpy.exe could not start because a DLL "
+                                    L"dependency was not found.");
+                    append_log_line(L"Make sure MSYS2 mingw64/bin and Android "
+                                    L"SDK platform-tools are installed, then "
+                                    L"restart VR Mobile.");
+                }
 
                 if (done->command == VR_LAUNCHER_COMMAND_CONNECTION_HEALTH
                         && done->exit_code == 0 && done->output) {
