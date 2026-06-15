@@ -25,6 +25,7 @@
 #define ID_BUTTON_PROFILE_SAVE 1009
 #define ID_BUTTON_PROFILE_RUN 1010
 #define ID_BUTTON_PROFILE_DELETE 1011
+#define ID_BUTTON_EXIT 1012
 #define ID_LOG 1101
 #define ID_STATUS 1102
 #define ID_DEVICE_LIST 1103
@@ -286,6 +287,59 @@ find_scrcpy_path(WCHAR *out, size_t out_len) {
 }
 
 static bool
+find_server_path_from_scrcpy(const WCHAR *scrcpy_path, WCHAR *out,
+                             size_t out_len) {
+    WCHAR scrcpy_dir[MAX_FILE_PATH_CHARS];
+    wcsncpy(scrcpy_dir, scrcpy_path,
+            sizeof(scrcpy_dir) / sizeof(scrcpy_dir[0]) - 1);
+    scrcpy_dir[sizeof(scrcpy_dir) / sizeof(scrcpy_dir[0]) - 1] = L'\0';
+    path_dirname(scrcpy_dir);
+
+    if (swprintf(out, out_len, L"%ls\\scrcpy-server", scrcpy_dir) > 0
+            && file_exists(out)) {
+        return true;
+    }
+
+    if (swprintf(out, out_len, L"%ls\\..\\server\\scrcpy-server",
+                 scrcpy_dir) > 0 && file_exists(out)) {
+        return true;
+    }
+
+    WCHAR cwd[MAX_PATH];
+    DWORD len = GetCurrentDirectoryW(MAX_PATH, cwd);
+    if (len && len < MAX_PATH) {
+        if (swprintf(out, out_len, L"%ls\\build\\server\\scrcpy-server",
+                     cwd) > 0 && file_exists(out)) {
+            return true;
+        }
+        if (swprintf(out, out_len, L"%ls\\server\\scrcpy-server",
+                     cwd) > 0 && file_exists(out)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void
+set_server_path_env_if_available(const WCHAR *scrcpy_path) {
+    WCHAR current[MAX_FILE_PATH_CHARS];
+    DWORD len = GetEnvironmentVariableW(L"SCRCPY_SERVER_PATH", current,
+                                        sizeof(current) / sizeof(current[0]));
+    if (len && len < sizeof(current) / sizeof(current[0])
+            && file_exists(current)) {
+        return;
+    }
+
+    WCHAR server_path[MAX_FILE_PATH_CHARS];
+    if (find_server_path_from_scrcpy(scrcpy_path, server_path,
+                                     sizeof(server_path)
+                                         / sizeof(server_path[0]))) {
+        SetEnvironmentVariableW(L"SCRCPY_SERVER_PATH", server_path);
+    }
+}
+
+static bool
 append_path_dir(WCHAR *buf, size_t buf_len, const WCHAR *dir) {
     if (!dir_exists(dir)) {
         return true;
@@ -395,6 +449,7 @@ prepare_child_environment(const WCHAR *scrcpy_path) {
 
     SetEnvironmentVariableW(L"PATH", merged);
     set_adb_env_if_available();
+    set_server_path_env_if_available(scrcpy_path);
 }
 
 static bool
@@ -1288,7 +1343,8 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
     wcscpy(runner->scrcpy_path, scrcpy_path);
 
     if (command == VR_LAUNCHER_COMMAND_CONNECT
-            || command == VR_LAUNCHER_COMMAND_DEVICE_STATUS) {
+            || command == VR_LAUNCHER_COMMAND_DEVICE_STATUS
+            || command == VR_LAUNCHER_COMMAND_RUN_PROFILE) {
         runner->has_serial = get_selected_serial(runner->serial,
                                                  sizeof(runner->serial));
     }
@@ -1354,10 +1410,18 @@ run_selected_profile(HWND hwnd) {
     }
 
     runner->has_profile = true;
+    runner->has_serial = get_selected_serial(runner->serial,
+                                             sizeof(runner->serial));
 
     WCHAR header[256];
-    swprintf(header, sizeof(header) / sizeof(header[0]),
-             L"> Run profile (%hs)", runner->profile_name);
+    if (runner->has_serial) {
+        swprintf(header, sizeof(header) / sizeof(header[0]),
+                 L"> Run profile (%hs) on %hs", runner->profile_name,
+                 runner->serial);
+    } else {
+        swprintf(header, sizeof(header) / sizeof(header[0]),
+                 L"> Run profile (%hs)", runner->profile_name);
+    }
     append_log_line(header);
     set_status(L"Running selected profile...");
     start_runner(runner);
@@ -1513,7 +1577,7 @@ resize_controls(HWND hwnd) {
     MoveWindow(autostart_check, width - margin - 220, y, 220, status_h, TRUE);
 
     y += status_h + gap;
-    int button_w = (width - (2 * margin) - (5 * gap)) / 6;
+    int button_w = (width - (2 * margin) - (6 * gap)) / 7;
     MoveWindow(GetDlgItem(hwnd, ID_BUTTON_CONNECT), x, y, button_w, button_h,
                TRUE);
     x += button_w + gap;
@@ -1530,6 +1594,9 @@ resize_controls(HWND hwnd) {
                TRUE);
     x += button_w + gap;
     MoveWindow(GetDlgItem(hwnd, ID_BUTTON_CLEAR), x, y, button_w, button_h,
+               TRUE);
+    x += button_w + gap;
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_EXIT), x, y, button_w, button_h,
                TRUE);
 
     y += button_h + gap;
@@ -1639,6 +1706,7 @@ apply_fonts(HWND hwnd) {
     set_font(GetDlgItem(hwnd, ID_BUTTON_REFRESH), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_DISCONNECT), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_CLEAR), ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_EXIT), ui_font);
     set_font(GetDlgItem(hwnd, ID_CHECK_AUTOSTART), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_REFRESH), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_SAVE), ui_font);
@@ -1756,6 +1824,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             create_button(hwnd, L"Refresh Devices", ID_BUTTON_REFRESH);
             create_button(hwnd, L"Device Status", ID_BUTTON_STATUS);
             create_button(hwnd, L"Clear Log", ID_BUTTON_CLEAR);
+            create_button(hwnd, L"Exit", ID_BUTTON_EXIT);
 
             devices_heading = create_label(hwnd, L"Devices");
             detail_heading = create_label(hwnd, L"Device Status");
@@ -1880,6 +1949,9 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     return 0;
                 case ID_BUTTON_CLEAR:
                     SetWindowTextW(log_edit, L"");
+                    return 0;
+                case ID_BUTTON_EXIT:
+                    exit_application(hwnd);
                     return 0;
                 case ID_CHECK_AUTOSTART:
                 case ID_TRAY_AUTOSTART:
