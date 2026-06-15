@@ -68,6 +68,8 @@ fitur tray/settings lebih cepat dibuat di layer launcher.
 **Status:** started. Target Windows launcher awal tersedia sebagai
 `build/desktop/vr-mobile.exe`. Dokumentasi penggunaan ada di
 [`doc/desktop-launcher.md`](desktop-launcher.md).
+Launcher v2 memisahkan proses mirror dan utility command, menambahkan device
+list, selected serial connect, dan panel device status yang lebih rapi.
 
 **Test v1:**
 
@@ -80,6 +82,8 @@ fitur tray/settings lebih cepat dibuat di layer launcher.
 
  - `test_launcher_commands`
  - Smoke test proses launcher start tanpa crash.
+ - Smoke test manual: `Refresh Devices`/`Device Status` dapat berjalan saat
+   mirror aktif.
 
 
 ## 2. Tray App Windows
@@ -285,9 +289,11 @@ APK Android pendamping.
    **Status:** started via `--output-format=json` for `--connection-health` and
    `--device-status`.
 2. Buat desktop launcher minimal.
-   **Status:** started via native Windows target `vr-mobile.exe`.
+   **Status:** started via native Windows target `vr-mobile.exe`; launcher v2
+   sudah punya dashboard device list.
 3. Tambahkan process manager connect/disconnect.
-   **Status:** started inside launcher v1 for one active `scrcpy.exe` process.
+   **Status:** started. Mirror process dan utility process sudah dipisah agar
+   status/health tetap bisa berjalan ketika mirror aktif.
 4. Tambahkan tray menu.
 5. Buat dashboard connect/status.
 6. Buat profile manager UI.
@@ -296,6 +302,27 @@ APK Android pendamping.
 9. Buat Android companion APK.
 10. Buat notification bridge desktop.
 11. Buat installer Windows.
+
+
+## Status fitur yang belum selesai
+
+Belum selesai di desktop layer:
+
+ - Tray app Windows.
+ - Auto start with Windows.
+ - Profile manager visual.
+ - File transfer drag & drop UI.
+ - Clipboard history UI.
+ - Quick actions UI.
+ - Installer Windows.
+
+Belum selesai karena butuh komponen tambahan:
+
+ - Notification Bridge membutuhkan companion APK Android dengan
+   `NotificationListenerService`.
+ - Quick reply notification membutuhkan riset permission dan kompatibilitas
+   aplikasi.
+ - File browser HP membutuhkan command tambahan untuk list/pull remote file.
 
 
 ## Definition of Done

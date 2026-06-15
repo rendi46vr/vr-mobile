@@ -2,6 +2,7 @@ desktop_inc = include_directories('src')
 
 desktop_common_src = [
     'src/launcher_commands.c',
+    'src/launcher_json.c',
 ]
 
 if host_machine.system() == 'windows'
@@ -27,4 +28,12 @@ if get_option('buildtype') == 'debug'
                      ],
                      include_directories: desktop_inc)
     test('test_launcher_commands', exe)
+
+    exe = executable('test_launcher_json',
+                     [
+                         'src/launcher_json.c',
+                         'tests/test_launcher_json.c',
+                     ],
+                     include_directories: desktop_inc)
+    test('test_launcher_json', exe)
 endif
