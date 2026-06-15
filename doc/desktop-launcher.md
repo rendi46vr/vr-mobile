@@ -33,6 +33,18 @@ Fitur v2:
  - Jika tidak ada device dipilih, `Connect` tetap memakai auto mode
    `scrcpy --connect-manager`.
 
+Fitur v3:
+
+ - System tray icon dengan menu `Open dashboard`, `Connect`, `Disconnect`,
+   `Refresh devices`, `Device status`, `Wireless setup`, `Start with Windows`,
+   dan `Exit`.
+ - Tombol `Start with Windows` yang menyimpan autostart ke registry Windows
+   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+ - Profile manager visual untuk refresh, create/edit, save, run, dan delete
+   profile dari folder config `profiles`.
+ - Area file transfer drag & drop. File yang di-drop akan masuk queue dan
+   dikirim lewat command core `--send-file=<path>`.
+
 
 ## Cara build
 
@@ -75,6 +87,11 @@ Test yang ditambahkan untuk launcher:
 Smoke test manual:
 
  - Jalankan `build/desktop/vr-mobile.exe`.
+ - Pastikan icon VR Mobile muncul di system tray.
+ - Klik kanan tray icon dan coba `Open dashboard`, `Refresh devices`, dan
+   `Exit`.
+ - Centang `Start with Windows`, tutup lalu buka app, dan pastikan checkbox
+   tetap mengikuti registry.
  - Klik `Refresh Devices` dan pastikan list Android terisi.
  - Pilih satu device lalu klik `Device Status`.
  - Pastikan panel status menampilkan serial, model, Android version, IP,
@@ -82,11 +99,15 @@ Smoke test manual:
  - Klik `Connect` dan pastikan mirror scrcpy terbuka.
  - Saat mirror aktif, klik `Refresh Devices` atau `Device Status` dan pastikan
    command tetap bisa berjalan.
+ - Buat profile baru, misalnya `xiaomi14`, isi argumen per baris, klik `Save`,
+   lalu klik `Run`.
+ - Drop file ke panel `File Transfer` dan pastikan log menampilkan proses
+   `--send-file`.
  - Klik `Disconnect` dan pastikan proses mirror berhenti.
 
 
 ## Catatan implementasi
 
-Launcher saat ini sengaja belum memiliki tray, installer, profile editor visual,
-file transfer UI, clipboard UI, atau notification bridge. Fitur-fitur itu akan
-ditambahkan bertahap setelah dashboard dasar dan process manager stabil.
+Launcher saat ini sengaja belum memiliki installer, clipboard UI, quick actions
+UI, atau notification bridge. Fitur-fitur itu akan ditambahkan bertahap setelah
+dashboard, tray, profile manager, dan file transfer stabil.

@@ -84,6 +84,9 @@ list, selected serial connect, dan panel device status yang lebih rapi.
  - Smoke test proses launcher start tanpa crash.
  - Smoke test manual: `Refresh Devices`/`Device Status` dapat berjalan saat
    mirror aktif.
+ - Smoke test manual: tray icon muncul dan menu dapat memanggil command utama.
+ - Smoke test manual: profile manager dapat save/run/delete profile.
+ - Smoke test manual: file drop menjalankan queue transfer lewat `--send-file`.
 
 
 ## 2. Tray App Windows
@@ -116,6 +119,11 @@ list, selected serial connect, dan panel device status yang lebih rapi.
  - Menu connect menjalankan mirror.
  - Menu disconnect menghentikan mirror.
  - Exit menutup tray dan child process dengan bersih.
+
+**Status:** v1 implemented in the native Windows launcher.
+
+**Catatan:** tombol close window menyembunyikan dashboard ke tray. Gunakan menu
+tray `Exit` untuk benar-benar menutup app.
 
 
 ## 3. Dashboard Connect Manager
@@ -177,6 +185,10 @@ list, selected serial connect, dan panel device status yang lebih rapi.
  - Profile bisa dijalankan.
  - Opsi manual override bekerja.
 
+**Status:** v1 implemented in the launcher. Profile manager membaca dan menulis
+file `.profile` di folder config `profiles`, lalu menjalankan profile dengan
+`scrcpy --profile=<name>`.
+
 
 ## 5. File Transfer UI
 
@@ -192,6 +204,11 @@ list, selected serial connect, dan panel device status yang lebih rapi.
 **Command yang dipakai:**
 
  - `scrcpy --connect-manager --send-file=<path>`
+
+**Status:** v1 implemented in the launcher. Drag & drop file masuk queue dan
+dikirim satu per satu lewat `--send-file`. Jika ada device dipilih, launcher
+memakai `--serial=<serial> --send-file=<path>`; jika tidak, launcher memakai
+`--connect-manager --send-file=<path>`.
 
 **Fitur lanjutan:**
 
@@ -295,9 +312,13 @@ APK Android pendamping.
    **Status:** started. Mirror process dan utility process sudah dipisah agar
    status/health tetap bisa berjalan ketika mirror aktif.
 4. Tambahkan tray menu.
+   **Status:** implemented in launcher v3.
 5. Buat dashboard connect/status.
+   **Status:** implemented in launcher v2/v3.
 6. Buat profile manager UI.
+   **Status:** implemented in launcher v3.
 7. Buat file transfer UI.
+   **Status:** implemented in launcher v3 for drag & drop send queue.
 8. Buat clipboard history UI.
 9. Buat Android companion APK.
 10. Buat notification bridge desktop.
@@ -308,10 +329,6 @@ APK Android pendamping.
 
 Belum selesai di desktop layer:
 
- - Tray app Windows.
- - Auto start with Windows.
- - Profile manager visual.
- - File transfer drag & drop UI.
  - Clipboard history UI.
  - Quick actions UI.
  - Installer Windows.

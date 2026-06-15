@@ -34,6 +34,10 @@ vr_launcher_command_label(enum vr_launcher_command command) {
             return "Device status";
         case VR_LAUNCHER_COMMAND_CONNECTION_HEALTH:
             return "Connection health";
+        case VR_LAUNCHER_COMMAND_RUN_PROFILE:
+            return "Run profile";
+        case VR_LAUNCHER_COMMAND_SEND_FILE:
+            return "Send file";
         default:
             return "Unknown command";
     }
@@ -50,6 +54,9 @@ vr_launcher_command_args(enum vr_launcher_command command) {
             return device_status_args;
         case VR_LAUNCHER_COMMAND_CONNECTION_HEALTH:
             return connection_health_args;
+        case VR_LAUNCHER_COMMAND_RUN_PROFILE:
+        case VR_LAUNCHER_COMMAND_SEND_FILE:
+            return NULL;
         default:
             return NULL;
     }

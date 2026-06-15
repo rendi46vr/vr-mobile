@@ -14,7 +14,9 @@ if host_machine.system() == 'windows'
                ],
                include_directories: desktop_inc,
                dependencies: [
+                   cc.find_library('advapi32'),
                    cc.find_library('gdi32'),
+                   cc.find_library('shell32'),
                    cc.find_library('user32'),
                ],
                gui_app: true,
