@@ -44,6 +44,8 @@ Fitur v3:
    profile dari folder config `profiles`.
  - Area file transfer drag & drop. File yang di-drop akan masuk queue dan
    dikirim lewat command core `--send-file=<path>`.
+ - File non-APK yang di-drop ke panel launcher atau window mirror akan masuk ke
+   `/sdcard/Download/VR Phone Mirror/`. File `.apk` akan dicoba install.
 
 
 ## Cara build
@@ -103,6 +105,8 @@ Smoke test manual:
    lalu klik `Run`.
  - Drop file ke panel `File Transfer` dan pastikan log menampilkan proses
    `--send-file`.
+ - Drop file langsung ke window mirror dan pastikan log menampilkan
+   `successfully pushed to /sdcard/Download/VR Phone Mirror/`.
  - Klik `Disconnect` dan pastikan proses mirror berhenti.
 
 

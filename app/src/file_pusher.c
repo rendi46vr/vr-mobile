@@ -7,7 +7,8 @@
 #include "adb/adb.h"
 #include "util/log.h"
 
-#define DEFAULT_PUSH_TARGET "/sdcard/Download/"
+#define DEFAULT_PUSH_TARGET "/sdcard/Download/VR Phone Mirror/"
+#define DEFAULT_PUSH_TARGET_MKDIR "mkdir -p '/sdcard/Download/VR Phone Mirror'"
 
 static void
 sc_file_pusher_request_destroy(struct sc_file_pusher_request *req) {
@@ -144,6 +145,16 @@ run_file_pusher(void *data) {
             }
         } else {
             LOGI("Pushing %s...", req.file);
+            if (!strcmp(push_target, DEFAULT_PUSH_TARGET)) {
+                bool ok = sc_adb_shell(intr, serial, DEFAULT_PUSH_TARGET_MKDIR,
+                                       0);
+                if (!ok) {
+                    LOGE("Failed to create %s", DEFAULT_PUSH_TARGET);
+                    sc_file_pusher_request_destroy(&req);
+                    continue;
+                }
+            }
+
             bool ok = sc_adb_push(intr, serial, req.file, push_target, 0);
             if (ok) {
                 LOGI("%s successfully pushed to %s", req.file, push_target);

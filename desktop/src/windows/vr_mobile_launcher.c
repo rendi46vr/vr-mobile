@@ -113,6 +113,13 @@ static size_t queued_file_count;
 static NOTIFYICONDATAW tray_icon;
 static bool tray_added;
 static bool exiting;
+static WNDPROC file_drop_edit_wndproc;
+
+static void
+show_dashboard(void);
+
+static void
+enqueue_file(HWND hwnd, const WCHAR *path);
 
 static void
 set_status(const WCHAR *text) {
@@ -1614,6 +1621,31 @@ enqueue_file(HWND hwnd, const WCHAR *path) {
 }
 
 static void
+process_drop_files(HWND hwnd, HDROP drop) {
+    UINT count = DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
+    for (UINT i = 0; i < count; ++i) {
+        WCHAR path[MAX_FILE_PATH_CHARS];
+        if (DragQueryFileW(drop, i, path,
+                           sizeof(path) / sizeof(path[0]))) {
+            enqueue_file(hwnd, path);
+        }
+    }
+    DragFinish(drop);
+    show_dashboard();
+}
+
+static LRESULT CALLBACK
+file_drop_edit_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg == WM_DROPFILES) {
+        HWND target = main_window ? main_window : GetParent(hwnd);
+        process_drop_files(target, (HDROP) wparam);
+        return 0;
+    }
+
+    return CallWindowProcW(file_drop_edit_wndproc, hwnd, msg, wparam, lparam);
+}
+
+static void
 terminate_process_slot(HANDLE *slot) {
     EnterCriticalSection(&process_lock);
     HANDLE process = *slot;
@@ -1994,6 +2026,10 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             refresh_profiles();
             sync_autostart_check();
             DragAcceptFiles(hwnd, TRUE);
+            DragAcceptFiles(file_drop_edit, TRUE);
+            file_drop_edit_wndproc =
+                (WNDPROC) SetWindowLongPtrW(file_drop_edit, GWLP_WNDPROC,
+                                            (LONG_PTR) file_drop_edit_proc);
             add_tray_icon(hwnd);
             resize_controls(hwnd);
             return 0;
@@ -2079,19 +2115,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             break;
 
         case WM_DROPFILES:
-            {
-                HDROP drop = (HDROP) wparam;
-                UINT count = DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
-                for (UINT i = 0; i < count; ++i) {
-                    WCHAR path[MAX_FILE_PATH_CHARS];
-                    if (DragQueryFileW(drop, i, path,
-                                       sizeof(path) / sizeof(path[0]))) {
-                        enqueue_file(hwnd, path);
-                    }
-                }
-                DragFinish(drop);
-                show_dashboard();
-            }
+            process_drop_files(hwnd, (HDROP) wparam);
             return 0;
 
         case WM_VR_TRAY:
@@ -2160,6 +2184,11 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
         case WM_DESTROY:
             DragAcceptFiles(hwnd, FALSE);
+            DragAcceptFiles(file_drop_edit, FALSE);
+            if (file_drop_edit_wndproc) {
+                SetWindowLongPtrW(file_drop_edit, GWLP_WNDPROC,
+                                  (LONG_PTR) file_drop_edit_wndproc);
+            }
             remove_tray_icon();
             DeleteObject(title_font);
             DeleteObject(ui_font);
