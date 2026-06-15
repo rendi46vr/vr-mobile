@@ -71,6 +71,7 @@ struct command_runner {
     bool has_serial;
     bool has_profile;
     bool has_file;
+    bool use_connect_manager;
     bool mirror;
 };
 
@@ -535,6 +536,98 @@ wide_to_utf8(const WCHAR *wide, char *out, size_t out_len) {
     return len > 0 && (size_t) len <= out_len;
 }
 
+static const char *
+skip_ascii_spaces(const char *s) {
+    while (*s == ' ' || *s == '\t') {
+        ++s;
+    }
+    return s;
+}
+
+static bool
+line_starts_with_arg(const char *line, const char *arg) {
+    size_t len = strlen(arg);
+    if (strncmp(line, arg, len)) {
+        return false;
+    }
+
+    return !line[len] || line[len] == '\r' || line[len] == '\n'
+        || line[len] == ' ' || line[len] == '\t' || line[len] == '=';
+}
+
+static bool
+profile_line_has_device_selector(const char *line) {
+    line = skip_ascii_spaces(line);
+    if (!*line || *line == '#') {
+        return false;
+    }
+
+    return line_starts_with_arg(line, "--serial")
+        || line_starts_with_arg(line, "-s")
+        || line_starts_with_arg(line, "--select-usb")
+        || line_starts_with_arg(line, "-d")
+        || line_starts_with_arg(line, "--select-tcpip")
+        || line_starts_with_arg(line, "-e")
+        || line_starts_with_arg(line, "--tcpip")
+        || line_starts_with_arg(line, "--connect-manager");
+}
+
+static bool
+profile_has_device_selector_w(const WCHAR *name) {
+    WCHAR path[MAX_PATH];
+    if (!get_profile_path(name, path, sizeof(path) / sizeof(path[0]), false)) {
+        return false;
+    }
+
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    DWORD size = GetFileSize(file, NULL);
+    if (size > 65536) {
+        size = 65536;
+    }
+
+    char *bytes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size + 1);
+    if (!bytes) {
+        CloseHandle(file);
+        return false;
+    }
+
+    DWORD read = 0;
+    bool ok = ReadFile(file, bytes, size, &read, NULL);
+    CloseHandle(file);
+    if (!ok) {
+        HeapFree(GetProcessHeap(), 0, bytes);
+        return false;
+    }
+    bytes[read] = '\0';
+
+    bool found = false;
+    char *line = bytes;
+    while (*line) {
+        char *next = strchr(line, '\n');
+        if (next) {
+            *next = '\0';
+        }
+
+        if (profile_line_has_device_selector(line)) {
+            found = true;
+            break;
+        }
+
+        if (!next) {
+            break;
+        }
+        line = next + 1;
+    }
+
+    HeapFree(GetProcessHeap(), 0, bytes);
+    return found;
+}
+
 static bool
 is_autostart_enabled(void) {
     HKEY key;
@@ -764,6 +857,11 @@ build_command_line(const struct command_runner *runner,
     }
 
     if (runner->command == VR_LAUNCHER_COMMAND_RUN_PROFILE) {
+        if (runner->use_connect_manager
+                && !append_ascii_arg(cmdline, len, "--connect-manager")) {
+            return false;
+        }
+
         return runner->has_profile
             && append_ascii_option_arg(cmdline, len, "--profile=",
                                        runner->profile_name);
@@ -1045,13 +1143,6 @@ get_profile_name_w(WCHAR *out, size_t out_len) {
 
     GetWindowTextW(profile_name_edit, out, (int) out_len);
     return profile_name_is_valid_w(out);
-}
-
-static bool
-get_profile_name_utf8(char *out, size_t out_len) {
-    WCHAR name[MAX_PROFILE_NAME_CHARS];
-    return get_profile_name_w(name, sizeof(name) / sizeof(name[0]))
-        && wide_to_utf8(name, out, out_len);
 }
 
 static void
@@ -1401,8 +1492,11 @@ run_selected_profile(HWND hwnd) {
         return;
     }
 
-    if (!get_profile_name_utf8(runner->profile_name,
-                               sizeof(runner->profile_name))) {
+    WCHAR profile_name_w[MAX_PROFILE_NAME_CHARS];
+    if (!get_profile_name_w(profile_name_w,
+                            sizeof(profile_name_w) / sizeof(profile_name_w[0]))
+            || !wide_to_utf8(profile_name_w, runner->profile_name,
+                             sizeof(runner->profile_name))) {
         HeapFree(GetProcessHeap(), 0, runner);
         append_log_line(L"Select or enter a valid profile name first.");
         set_status(L"No profile selected");
@@ -1412,12 +1506,18 @@ run_selected_profile(HWND hwnd) {
     runner->has_profile = true;
     runner->has_serial = get_selected_serial(runner->serial,
                                              sizeof(runner->serial));
+    runner->use_connect_manager =
+        !runner->has_serial && !profile_has_device_selector_w(profile_name_w);
 
     WCHAR header[256];
     if (runner->has_serial) {
         swprintf(header, sizeof(header) / sizeof(header[0]),
                  L"> Run profile (%hs) on %hs", runner->profile_name,
                  runner->serial);
+    } else if (runner->use_connect_manager) {
+        swprintf(header, sizeof(header) / sizeof(header[0]),
+                 L"> Run profile (%hs) with auto connect",
+                 runner->profile_name);
     } else {
         swprintf(header, sizeof(header) / sizeof(header[0]),
                  L"> Run profile (%hs)", runner->profile_name);
