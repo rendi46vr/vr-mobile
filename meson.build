@@ -13,6 +13,10 @@ if get_option('compile_app')
     subdir('app')
 endif
 
+if get_option('compile_desktop') and host_machine.system() == 'windows'
+    subdir('desktop')
+endif
+
 if get_option('compile_server')
     subdir('server')
 endif

@@ -65,12 +65,21 @@ fitur tray/settings lebih cepat dibuat di layer launcher.
  - Log output scrcpy/ADB.
  - Process manager untuk menjalankan dan menghentikan `scrcpy.exe`.
 
+**Status:** started. Target Windows launcher awal tersedia sebagai
+`build/desktop/vr-mobile.exe`. Dokumentasi penggunaan ada di
+[`doc/desktop-launcher.md`](desktop-launcher.md).
+
 **Test v1:**
 
  - App bisa membuka dashboard.
  - App bisa menjalankan `scrcpy.exe --connect-manager`.
  - App bisa menghentikan proses mirror.
  - Error command tampil di UI.
+
+**Test saat ini:**
+
+ - `test_launcher_commands`
+ - Smoke test proses launcher start tanpa crash.
 
 
 ## 2. Tray App Windows
@@ -276,7 +285,9 @@ APK Android pendamping.
    **Status:** started via `--output-format=json` for `--connection-health` and
    `--device-status`.
 2. Buat desktop launcher minimal.
+   **Status:** started via native Windows target `vr-mobile.exe`.
 3. Tambahkan process manager connect/disconnect.
+   **Status:** started inside launcher v1 for one active `scrcpy.exe` process.
 4. Tambahkan tray menu.
 5. Buat dashboard connect/status.
 6. Buat profile manager UI.
