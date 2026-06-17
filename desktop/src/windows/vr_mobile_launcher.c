@@ -50,10 +50,22 @@
 
 #define VR_STATUS_DLL_NOT_FOUND 0xC0000135UL
 
+#ifndef MSGFLT_ALLOW
+# define MSGFLT_ALLOW 1
+#endif
+
+#ifndef WM_COPYGLOBALDATA
+# define WM_COPYGLOBALDATA 0x0049
+#endif
+
 #define MAX_FILE_QUEUE 64
 #define MAX_FILE_PATH_CHARS 32768
 #define MAX_PROFILE_NAME_CHARS 128
 #define VR_AUTOSTART_VALUE_NAME L"VR Mobile"
+#define VR_FILE_DROP_TARGET L"/sdcard/Download/VR Phone Mirror/"
+
+typedef BOOL (WINAPI *change_window_message_filter_ex_fn)(HWND, UINT, DWORD,
+                                                          void *);
 
 struct output_buffer {
     char *data;
@@ -124,6 +136,37 @@ enqueue_file(HWND hwnd, const WCHAR *path);
 static void
 set_status(const WCHAR *text) {
     SetWindowTextW(status_label, text);
+}
+
+static void
+enable_drag_drop(HWND hwnd) {
+    DragAcceptFiles(hwnd, TRUE);
+
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) {
+        return;
+    }
+
+    union {
+        FARPROC proc;
+        change_window_message_filter_ex_fn fn;
+    } change_filter = {
+        .proc = GetProcAddress(user32, "ChangeWindowMessageFilterEx"),
+    };
+    if (!change_filter.fn) {
+        return;
+    }
+
+    change_filter.fn(hwnd, WM_DROPFILES, MSGFLT_ALLOW, NULL);
+    change_filter.fn(hwnd, WM_COPYDATA, MSGFLT_ALLOW, NULL);
+    change_filter.fn(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, NULL);
+}
+
+static void
+disable_drag_drop(HWND hwnd) {
+    if (hwnd) {
+        DragAcceptFiles(hwnd, FALSE);
+    }
 }
 
 static void
@@ -1080,9 +1123,14 @@ update_devices_from_health(const char *output) {
     device_count = 0;
 
     struct vr_launcher_device_info parsed[VR_LAUNCHER_MAX_DEVICES];
-    size_t parsed_count =
-        vr_launcher_parse_devices(output, parsed, VR_LAUNCHER_MAX_DEVICES);
-    if (!parsed_count) {
+    size_t parsed_count = 0;
+    char last_wifi_serial[VR_LAUNCHER_MAX_SERIAL_LEN] = "";
+    bool parsed_ok =
+        vr_launcher_parse_connection_health(output, parsed,
+                                            VR_LAUNCHER_MAX_DEVICES,
+                                            &parsed_count, last_wifi_serial,
+                                            sizeof(last_wifi_serial));
+    if (!parsed_ok) {
         set_detail(L"Could not parse device list. See log for raw output.");
         update_device_summary();
         return;
@@ -1102,8 +1150,24 @@ update_devices_from_health(const char *output) {
         set_detail(L"Device list refreshed. Select a device, then click "
                    L"Device Status or Connect.");
     } else {
-        set_detail(L"No Android devices found. Connect via USB, allow USB "
-                   L"debugging, then refresh.");
+        WCHAR detail[1024];
+        if (last_wifi_serial[0]) {
+            swprintf(detail, sizeof(detail) / sizeof(detail[0]),
+                     L"No Android devices found by ADB.\r\n\r\n"
+                     L"Last saved Wi-Fi device: %hs\r\n\r\n"
+                     L"If this is from yesterday, the phone IP may have "
+                     L"changed or wireless ADB may be off. Connect via USB, "
+                     L"allow USB debugging on the phone, click Refresh "
+                     L"Devices, then run Wireless Setup again.",
+                     last_wifi_serial);
+        } else {
+            swprintf(detail, sizeof(detail) / sizeof(detail[0]),
+                     L"No Android devices found by ADB.\r\n\r\n"
+                     L"Connect via USB, enable Developer Options and USB "
+                     L"debugging, allow the RSA prompt on the phone, then "
+                     L"click Refresh Devices.");
+        }
+        set_detail(detail);
     }
 
     update_device_summary();
@@ -1566,6 +1630,7 @@ refresh_file_queue_display(void) {
     SetWindowTextW(file_drop_edit, L"");
     if (!queued_file_count) {
         append_file_transfer_line(L"Drop files here to send to phone.");
+        append_file_transfer_line(L"Target: " VR_FILE_DROP_TARGET);
         append_file_transfer_line(L"APK files will be installed by the core send-file command.");
         return;
     }
@@ -1613,16 +1678,37 @@ enqueue_file(HWND hwnd, const WCHAR *path) {
         return;
     }
 
+    WCHAR log_line[MAX_FILE_PATH_CHARS + 64];
+    swprintf(log_line, sizeof(log_line) / sizeof(log_line[0]),
+             L"Drop detected: %ls", path);
+    append_log_line(log_line);
+
     wcsncpy(queued_files[queued_file_count], path, MAX_FILE_PATH_CHARS - 1);
     queued_files[queued_file_count][MAX_FILE_PATH_CHARS - 1] = L'\0';
     ++queued_file_count;
     refresh_file_queue_display();
+    set_status(L"File drop detected");
     start_next_queued_file(hwnd);
 }
 
 static void
 process_drop_files(HWND hwnd, HDROP drop) {
     UINT count = DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
+    if (!count) {
+        append_log_line(L"Drop ignored: no files were provided by Windows.");
+        append_file_transfer_line(L"Drop ignored: no files were provided by Windows.");
+        set_status(L"Drop ignored");
+        DragFinish(drop);
+        show_dashboard();
+        return;
+    }
+
+    WCHAR summary[96];
+    swprintf(summary, sizeof(summary) / sizeof(summary[0]),
+             L"Drop accepted: %u file(s)", count);
+    append_log_line(summary);
+    append_file_transfer_line(summary);
+
     for (UINT i = 0; i < count; ++i) {
         WCHAR path[MAX_FILE_PATH_CHARS];
         if (DragQueryFileW(drop, i, path,
@@ -1980,7 +2066,8 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                 app_instance, NULL);
 
             file_drop_edit =
-                CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_ACCEPTFILES,
+                                L"EDIT", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL |
                                     ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL |
                                     ES_READONLY,
@@ -2025,8 +2112,8 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             refresh_file_queue_display();
             refresh_profiles();
             sync_autostart_check();
-            DragAcceptFiles(hwnd, TRUE);
-            DragAcceptFiles(file_drop_edit, TRUE);
+            enable_drag_drop(hwnd);
+            enable_drag_drop(file_drop_edit);
             file_drop_edit_wndproc =
                 (WNDPROC) SetWindowLongPtrW(file_drop_edit, GWLP_WNDPROC,
                                             (LONG_PTR) file_drop_edit_proc);
@@ -2157,8 +2244,11 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     update_detail_from_status(done->output);
                     update_device_summary();
                 } else if (done->command == VR_LAUNCHER_COMMAND_SEND_FILE) {
-                    set_status(done->exit_code == 0 ? L"File sent"
-                                                     : L"File transfer failed");
+                    bool ok = done->exit_code == 0;
+                    set_status(ok ? L"File sent" : L"File transfer failed");
+                    append_file_transfer_line(
+                        ok ? L"Transfer completed. Check " VR_FILE_DROP_TARGET
+                           : L"Transfer failed. Check the Log panel above.");
                     start_next_queued_file(hwnd);
                 } else if (done->mirror) {
                     set_status(done->exit_code == 0 ? L"Mirror stopped"
@@ -2183,8 +2273,8 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
 
         case WM_DESTROY:
-            DragAcceptFiles(hwnd, FALSE);
-            DragAcceptFiles(file_drop_edit, FALSE);
+            disable_drag_drop(hwnd);
+            disable_drag_drop(file_drop_edit);
             if (file_drop_edit_wndproc) {
                 SetWindowLongPtrW(file_drop_edit, GWLP_WNDPROC,
                                   (LONG_PTR) file_drop_edit_wndproc);

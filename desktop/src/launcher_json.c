@@ -133,20 +133,35 @@ size_t
 vr_launcher_parse_devices(const char *output,
                           struct vr_launcher_device_info *devices,
                           size_t max_devices) {
+    size_t count;
+    if (!vr_launcher_parse_connection_health(output, devices, max_devices,
+                                             &count, NULL, 0)) {
+        return 0;
+    }
+
+    return count;
+}
+
+bool
+vr_launcher_parse_connection_health(const char *output,
+                                    struct vr_launcher_device_info *devices,
+                                    size_t max_devices, size_t *device_count,
+                                    char *last_wifi_serial,
+                                    size_t last_wifi_serial_len) {
     const char *json = find_json_object(output, "\"devices\"");
     if (!json) {
-        return 0;
+        return false;
     }
 
     const char *devices_key = strstr(json, "\"devices\":[");
     if (!devices_key) {
-        return 0;
+        return false;
     }
 
     const char *p = strchr(devices_key, '[');
     const char *end = p ? strchr(p, ']') : NULL;
     if (!p || !end) {
-        return 0;
+        return false;
     }
 
     size_t count = 0;
@@ -177,7 +192,18 @@ vr_launcher_parse_devices(const char *output,
         p = obj_end + 1;
     }
 
-    return count;
+    if (device_count) {
+        *device_count = count;
+    }
+
+    if (last_wifi_serial && last_wifi_serial_len) {
+        if (!json_extract_string(json, "last_wifi_serial", last_wifi_serial,
+                                 last_wifi_serial_len)) {
+            last_wifi_serial[0] = '\0';
+        }
+    }
+
+    return true;
 }
 
 bool

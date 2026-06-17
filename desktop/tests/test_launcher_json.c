@@ -26,6 +26,24 @@ test_parse_devices_with_log_prefix(void) {
 }
 
 static void
+test_parse_empty_connection_health(void) {
+    const char *output =
+        "scrcpy 4.0\n"
+        "{\"devices\":[],\"last_wifi_serial\":\"10.208.64.184:5555\"}\n";
+
+    struct vr_launcher_device_info devices[VR_LAUNCHER_MAX_DEVICES];
+    size_t count = 42;
+    char last_wifi_serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+    bool ok = vr_launcher_parse_connection_health(
+        output, devices, VR_LAUNCHER_MAX_DEVICES, &count, last_wifi_serial,
+        sizeof(last_wifi_serial));
+
+    assert(ok);
+    assert(count == 0);
+    assert(!strcmp("10.208.64.184:5555", last_wifi_serial));
+}
+
+static void
 test_parse_device_status(void) {
     const char *output =
         "INFO: Connect manager status: Wi-Fi connected\n"
@@ -60,6 +78,7 @@ main(int argc, char *argv[]) {
     (void) argv;
 
     test_parse_devices_with_log_prefix();
+    test_parse_empty_connection_health();
     test_parse_device_status();
 
     return 0;

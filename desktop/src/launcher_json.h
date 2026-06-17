@@ -26,11 +26,18 @@ struct vr_launcher_device_status {
 
 size_t
 vr_launcher_parse_devices(const char *output,
-                          struct vr_launcher_device_info *devices,
-                          size_t max_devices);
+                           struct vr_launcher_device_info *devices,
+                           size_t max_devices);
+
+bool
+vr_launcher_parse_connection_health(const char *output,
+                                    struct vr_launcher_device_info *devices,
+                                    size_t max_devices, size_t *device_count,
+                                    char *last_wifi_serial,
+                                    size_t last_wifi_serial_len);
 
 bool
 vr_launcher_parse_device_status(const char *output,
-                                struct vr_launcher_device_status *status);
+                                 struct vr_launcher_device_status *status);
 
 #endif

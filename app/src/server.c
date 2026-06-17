@@ -1019,11 +1019,17 @@ sc_server_configure_connect_manager(struct sc_server *server) {
         case SC_CONNECT_MANAGER_ACTION_CONNECT_LAST_WIFI:
             assert(result.serial);
             ok = sc_server_configure_tcpip_known_address(server, result.serial,
-                                                         false);
+                                                          false);
             if (ok) {
                 assert(server->serial);
                 sc_connect_manager_save_last_wifi_serial(server->serial);
                 LOGI("Connect manager status: Wi-Fi connected");
+            } else {
+                LOGE("Last saved Wi-Fi device could not be reached.");
+                LOGE("The phone IP may have changed, wireless ADB may be off, "
+                     "or the phone and PC may be on different networks.");
+                LOGE("Connect the phone via USB, allow USB debugging, click "
+                     "Refresh Devices, then run Wireless Setup again.");
             }
             break;
         case SC_CONNECT_MANAGER_ACTION_ERROR:
