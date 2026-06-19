@@ -179,6 +179,9 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, "100.80.12.34"));
+    assert(args.opts.max_size == 1280);
+    assert(!strcmp(args.opts.max_fps, "30"));
+    assert(args.opts.video_bit_rate == 2000000);
 
     args.opts = scrcpy_options_default;
     char *argv_last[] = {"scrcpy", "--tailscale"};
@@ -187,6 +190,24 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, ""));
+    assert(args.opts.max_size == 1280);
+    assert(!strcmp(args.opts.max_fps, "30"));
+    assert(args.opts.video_bit_rate == 2000000);
+
+    args.opts = scrcpy_options_default;
+    char *argv_override[] = {
+        "scrcpy",
+        "--tailscale=100.80.12.34",
+        "--max-size=1024",
+        "--max-fps=15",
+        "--video-bit-rate=1M",
+    };
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_override), argv_override);
+    assert(ok);
+    assert(args.opts.max_size == 1024);
+    assert(!strcmp(args.opts.max_fps, "15"));
+    assert(args.opts.video_bit_rate == 1000000);
 
     args.opts = scrcpy_options_default;
     char *argv_conflict[] = {"scrcpy", "--tailscale=100.80.12.34",

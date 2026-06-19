@@ -20,6 +20,10 @@
 #define STR_IMPL_(x) #x
 #define STR(x) STR_IMPL_(x)
 
+#define SC_TAILSCALE_DEFAULT_MAX_SIZE 1280
+#define SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE 2000000
+#define SC_TAILSCALE_DEFAULT_MAX_FPS "30"
+
 enum {
     OPT_WINDOW_TITLE = 1000,
     OPT_PUSH_TARGET,
@@ -393,7 +397,10 @@ static const struct sc_option options[] = {
                 "Pass a Tailscale IPv4 address or MagicDNS hostname. If no "
                 "port is provided, port 5555 is used. If no address is "
                 "provided, the last saved Tailscale address is reused.\n"
-                "The phone must already have ADB TCP/IP mode enabled.",
+                "The phone must already have ADB TCP/IP mode enabled.\n"
+                "For smoother VPN usage, VR Mobile applies lightweight "
+                "defaults unless explicitly overridden: max size 1280, max "
+                "FPS 30 and video bit rate 2M.",
     },
     {
         .longopt_id = OPT_CROP,
@@ -2439,6 +2446,33 @@ parse_connect_manager(const char *s, enum sc_connect_manager_mode *mode) {
     return false;
 }
 
+static void
+apply_tailscale_video_defaults(struct scrcpy_options *opts) {
+    bool applied = false;
+
+    if (!opts->max_size) {
+        opts->max_size = SC_TAILSCALE_DEFAULT_MAX_SIZE;
+        applied = true;
+    }
+
+    if (!opts->max_fps) {
+        opts->max_fps = SC_TAILSCALE_DEFAULT_MAX_FPS;
+        applied = true;
+    }
+
+    if (!opts->video_bit_rate) {
+        opts->video_bit_rate = SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE;
+        applied = true;
+    }
+
+    if (applied) {
+        LOGI("Tailscale mode: using lightweight video defaults "
+             "(max-size=%u, max-fps=%s, video-bit-rate=2M). Override them "
+             "with --max-size, --max-fps or --video-bit-rate if needed.",
+             SC_TAILSCALE_DEFAULT_MAX_SIZE, SC_TAILSCALE_DEFAULT_MAX_FPS);
+    }
+}
+
 static bool
 parse_auto_reconnect_delay(const char *s, uint16_t *delay) {
     if (!s) {
@@ -3259,6 +3293,10 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
              "--select-tcpip, --tcpip, --connect-manager or "
              "--wireless-setup");
         return false;
+    }
+
+    if (opts->tailscale_dst) {
+        apply_tailscale_video_defaults(opts);
     }
 
     if (opts->auto_reconnect

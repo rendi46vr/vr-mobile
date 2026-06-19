@@ -133,6 +133,20 @@ reuse it:
 scrcpy --tailscale
 ```
 
+Because Tailscale/VPN links are often heavier than local Wi-Fi, `--tailscale`
+automatically applies lightweight video defaults unless you explicitly override
+them:
+
+ - `--max-size=1280`
+ - `--max-fps=30`
+ - `--video-bit-rate=2M`
+
+For slower networks, reduce them further:
+
+```bash
+scrcpy --tailscale=100.80.12.34 --max-size=1024 --max-fps=15 --video-bit-rate=1M
+```
+
 Notes:
 
  - Both the PC and phone must be online in the same Tailscale tailnet.
