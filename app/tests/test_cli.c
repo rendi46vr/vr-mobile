@@ -166,6 +166,36 @@ static void test_connect_manager_options(void) {
     assert(!ok);
 }
 
+static void test_tailscale_options(void) {
+    struct scrcpy_cli_args args = {
+        .opts = scrcpy_options_default,
+        .help = false,
+        .version = false,
+    };
+
+    char *argv[] = {"scrcpy", "--tailscale=100.80.12.34"};
+
+    bool ok = scrcpy_parse_args(&args, ARRAY_LEN(argv), argv);
+    assert(ok);
+    assert(args.opts.tailscale_dst);
+    assert(!strcmp(args.opts.tailscale_dst, "100.80.12.34"));
+
+    args.opts = scrcpy_options_default;
+    char *argv_last[] = {"scrcpy", "--tailscale"};
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_last), argv_last);
+    assert(ok);
+    assert(args.opts.tailscale_dst);
+    assert(!strcmp(args.opts.tailscale_dst, ""));
+
+    args.opts = scrcpy_options_default;
+    char *argv_conflict[] = {"scrcpy", "--tailscale=100.80.12.34",
+                             "--connect-manager"};
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_conflict), argv_conflict);
+    assert(!ok);
+}
+
 static void test_wireless_setup_options(void) {
     struct scrcpy_cli_args args = {
         .opts = scrcpy_options_default,
@@ -490,6 +520,7 @@ int main(int argc, char *argv[]) {
     test_options();
     test_options2();
     test_connect_manager_options();
+    test_tailscale_options();
     test_wireless_setup_options();
     test_vr_mobile_utility_options();
     test_device_profile_options();

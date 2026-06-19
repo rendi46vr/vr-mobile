@@ -26,8 +26,9 @@ Rencana eksekusi desktop/tray/APK yang lebih detail dicatat di
 
 ## 1. One-click Connect Manager
 
-**Status:** v1 foundation implemented as `--connect-manager[=auto|usb|wifi]`.
-The native one-click UI can call this same flow later.
+**Status:** v1 foundation implemented as `--connect-manager[=auto|usb|wifi]`,
+plus Tailscale connect via `--tailscale[=addr]`. The native one-click UI can
+call these same flows.
 
 **Masalah user:** user awam tidak tahu apakah HP sudah terbaca, masih
 unauthorized, offline, atau harus memilih mode USB/Wi-Fi.
@@ -56,6 +57,9 @@ state ADB dan menyimpan device terakhir, lalu hubungkan ke UI connect manager.
  - `--connect-manager=usb` membatasi koneksi ke USB.
  - `--connect-manager=wifi` memakai device Wi-Fi yang sudah tersambung, atau
    mengaktifkan TCP/IP dari satu device USB.
+ - `--tailscale=<addr>` menghubungkan ADB TCP/IP lewat IP Tailscale atau
+   MagicDNS hostname dan menyimpan alamat terakhir.
+ - `--tailscale` tanpa alamat memakai last saved Tailscale address.
  - Status utama sudah diterjemahkan di log: USB connected, Wi-Fi connected, ADB
    unauthorized, Device offline, no device, dan multiple devices.
  - Test unit ditambahkan untuk decision logic dan parser CLI.

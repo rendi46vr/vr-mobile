@@ -30,6 +30,8 @@ vr_launcher_command_label(enum vr_launcher_command command) {
             return "Connect";
         case VR_LAUNCHER_COMMAND_WIRELESS_SETUP:
             return "Wireless setup";
+        case VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT:
+            return "Tailscale connect";
         case VR_LAUNCHER_COMMAND_DEVICE_STATUS:
             return "Device status";
         case VR_LAUNCHER_COMMAND_CONNECTION_HEALTH:
@@ -50,6 +52,8 @@ vr_launcher_command_args(enum vr_launcher_command command) {
             return connect_args;
         case VR_LAUNCHER_COMMAND_WIRELESS_SETUP:
             return wireless_setup_args;
+        case VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT:
+            return NULL;
         case VR_LAUNCHER_COMMAND_DEVICE_STATUS:
             return device_status_args;
         case VR_LAUNCHER_COMMAND_CONNECTION_HEALTH:

@@ -26,6 +26,7 @@
 #define ID_BUTTON_PROFILE_RUN 1010
 #define ID_BUTTON_PROFILE_DELETE 1011
 #define ID_BUTTON_EXIT 1012
+#define ID_BUTTON_TAILSCALE 1013
 #define ID_LOG 1101
 #define ID_STATUS 1102
 #define ID_DEVICE_LIST 1103
@@ -34,6 +35,7 @@
 #define ID_PROFILE_NAME 1106
 #define ID_PROFILE_ARGS 1107
 #define ID_FILE_DROP 1108
+#define ID_TAILSCALE_ADDR 1109
 
 #define ID_TRAY_OPEN 2001
 #define ID_TRAY_CONNECT 2002
@@ -43,6 +45,7 @@
 #define ID_TRAY_WIRELESS 2006
 #define ID_TRAY_AUTOSTART 2007
 #define ID_TRAY_EXIT 2008
+#define ID_TRAY_TAILSCALE 2009
 
 #define WM_VR_LOG (WM_APP + 1)
 #define WM_VR_DONE (WM_APP + 2)
@@ -80,9 +83,11 @@ struct command_runner {
     char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
     char profile_name[MAX_PROFILE_NAME_CHARS];
     WCHAR file_path[MAX_FILE_PATH_CHARS];
+    WCHAR tailscale_addr[512];
     bool has_serial;
     bool has_profile;
     bool has_file;
+    bool has_tailscale_addr;
     bool use_connect_manager;
     bool mirror;
 };
@@ -100,6 +105,8 @@ static HWND main_window;
 static HWND title_label;
 static HWND status_label;
 static HWND autostart_check;
+static HWND tailscale_label;
+static HWND tailscale_addr_edit;
 static HWND devices_heading;
 static HWND detail_heading;
 static HWND log_heading;
@@ -586,6 +593,25 @@ wide_to_utf8(const WCHAR *wide, char *out, size_t out_len) {
     return len > 0 && (size_t) len <= out_len;
 }
 
+static void
+trim_wide_in_place(WCHAR *s) {
+    WCHAR *start = s;
+    while (*start == L' ' || *start == L'\t' || *start == L'\r'
+            || *start == L'\n') {
+        ++start;
+    }
+    if (start != s) {
+        memmove(s, start, (wcslen(start) + 1) * sizeof(*s));
+    }
+
+    WCHAR *end = s + wcslen(s);
+    while (end > s && (end[-1] == L' ' || end[-1] == L'\t'
+            || end[-1] == L'\r' || end[-1] == L'\n')) {
+        --end;
+    }
+    *end = L'\0';
+}
+
 static const char *
 skip_ascii_spaces(const char *s) {
     while (*s == ' ' || *s == '\t') {
@@ -917,6 +943,13 @@ build_command_line(const struct command_runner *runner,
                                        runner->profile_name);
     }
 
+    if (runner->command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT) {
+        return runner->has_tailscale_addr
+            ? append_wide_option_arg(cmdline, len, L"--tailscale=",
+                                     runner->tailscale_addr)
+            : append_ascii_arg(cmdline, len, "--tailscale");
+    }
+
     if (runner->command == VR_LAUNCHER_COMMAND_SEND_FILE) {
         if (!runner->has_serial
                 && !append_ascii_arg(cmdline, len, "--connect-manager")) {
@@ -1125,11 +1158,14 @@ update_devices_from_health(const char *output) {
     struct vr_launcher_device_info parsed[VR_LAUNCHER_MAX_DEVICES];
     size_t parsed_count = 0;
     char last_wifi_serial[VR_LAUNCHER_MAX_SERIAL_LEN] = "";
+    char last_tailscale_serial[VR_LAUNCHER_MAX_SERIAL_LEN] = "";
     bool parsed_ok =
         vr_launcher_parse_connection_health(output, parsed,
                                             VR_LAUNCHER_MAX_DEVICES,
                                             &parsed_count, last_wifi_serial,
-                                            sizeof(last_wifi_serial));
+                                            sizeof(last_wifi_serial),
+                                            last_tailscale_serial,
+                                            sizeof(last_tailscale_serial));
     if (!parsed_ok) {
         set_detail(L"Could not parse device list. See log for raw output.");
         update_device_summary();
@@ -1151,15 +1187,17 @@ update_devices_from_health(const char *output) {
                    L"Device Status or Connect.");
     } else {
         WCHAR detail[1024];
-        if (last_wifi_serial[0]) {
+        if (last_wifi_serial[0] || last_tailscale_serial[0]) {
             swprintf(detail, sizeof(detail) / sizeof(detail[0]),
                      L"No Android devices found by ADB.\r\n\r\n"
-                     L"Last saved Wi-Fi device: %hs\r\n\r\n"
-                     L"If this is from yesterday, the phone IP may have "
-                     L"changed or wireless ADB may be off. Connect via USB, "
-                     L"allow USB debugging on the phone, click Refresh "
-                     L"Devices, then run Wireless Setup again.",
-                     last_wifi_serial);
+                     L"Last saved Wi-Fi device: %hs\r\n"
+                     L"Last saved Tailscale device: %hs\r\n\r\n"
+                     L"If the LAN Wi-Fi address is stale, connect via USB and "
+                     L"run Wireless Setup again. For Tailscale, make sure "
+                     L"Tailscale is online on both devices and ADB TCP/IP is "
+                     L"enabled on the phone.",
+                     last_wifi_serial[0] ? last_wifi_serial : "-",
+                     last_tailscale_serial[0] ? last_tailscale_serial : "-");
         } else {
             swprintf(detail, sizeof(detail) / sizeof(detail[0]),
                      L"No Android devices found by ADB.\r\n\r\n"
@@ -1463,6 +1501,7 @@ start_runner(struct command_runner *runner) {
 static void
 start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
     bool mirror = command == VR_LAUNCHER_COMMAND_CONNECT
+               || command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT
                || command == VR_LAUNCHER_COMMAND_RUN_PROFILE;
 
     if (mirror && is_mirror_running()) {
@@ -1511,8 +1550,23 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
                                                  sizeof(runner->serial));
     }
 
+    if (command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT) {
+        GetWindowTextW(tailscale_addr_edit, runner->tailscale_addr,
+                       (int) (sizeof(runner->tailscale_addr)
+                              / sizeof(runner->tailscale_addr[0])));
+        trim_wide_in_place(runner->tailscale_addr);
+        runner->has_tailscale_addr = runner->tailscale_addr[0] != L'\0';
+    }
+
     WCHAR header[512];
-    if (runner->has_serial) {
+    if (command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT
+            && runner->has_tailscale_addr) {
+        swprintf(header, sizeof(header) / sizeof(header[0]),
+                 L"> Tailscale connect (%ls)", runner->tailscale_addr);
+    } else if (command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT) {
+        swprintf(header, sizeof(header) / sizeof(header[0]),
+                 L"> Tailscale connect (last saved address)");
+    } else if (runner->has_serial) {
         swprintf(header, sizeof(header) / sizeof(header[0]), L"> %hs (%hs)",
                  vr_launcher_command_label(command), runner->serial);
     } else {
@@ -1535,6 +1589,11 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
             break;
         case VR_LAUNCHER_COMMAND_WIRELESS_SETUP:
             set_status(L"Running wireless setup...");
+            break;
+        case VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT:
+            set_status(runner->has_tailscale_addr
+                           ? L"Connecting through Tailscale..."
+                           : L"Connecting to saved Tailscale device...");
             break;
         case VR_LAUNCHER_COMMAND_RUN_PROFILE:
             set_status(L"Running selected profile...");
@@ -1818,6 +1877,20 @@ resize_controls(HWND hwnd) {
                TRUE);
 
     y += button_h + gap;
+    x = margin;
+    int tailscale_label_w = 130;
+    int tailscale_button_w = 170;
+    MoveWindow(tailscale_label, x, y, tailscale_label_w, button_h, TRUE);
+    x += tailscale_label_w + gap;
+    MoveWindow(tailscale_addr_edit, x, y,
+               width - (2 * margin) - tailscale_label_w
+                   - tailscale_button_w - (2 * gap),
+               button_h, TRUE);
+    x = width - margin - tailscale_button_w;
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_TAILSCALE), x, y,
+               tailscale_button_w, button_h, TRUE);
+
+    y += button_h + gap;
 
     int log_h = height / 3;
     if (log_h < 150) {
@@ -1912,6 +1985,8 @@ static void
 apply_fonts(HWND hwnd) {
     set_font(title_label, title_font);
     set_font(status_label, ui_font);
+    set_font(tailscale_label, ui_font);
+    set_font(tailscale_addr_edit, ui_font);
     set_font(devices_heading, ui_font);
     set_font(detail_heading, ui_font);
     set_font(log_heading, ui_font);
@@ -1920,6 +1995,7 @@ apply_fonts(HWND hwnd) {
     set_font(log_edit, mono_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_CONNECT), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_WIRELESS), ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_TAILSCALE), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_STATUS), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_REFRESH), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_DISCONNECT), ui_font);
@@ -1981,6 +2057,7 @@ show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING, ID_TRAY_OPEN, L"Open dashboard");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, ID_TRAY_CONNECT, L"Connect");
+    AppendMenuW(menu, MF_STRING, ID_TRAY_TAILSCALE, L"Tailscale connect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_DISCONNECT, L"Disconnect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_REFRESH, L"Refresh devices");
     AppendMenuW(menu, MF_STRING, ID_TRAY_STATUS, L"Device status");
@@ -2043,6 +2120,15 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             create_button(hwnd, L"Device Status", ID_BUTTON_STATUS);
             create_button(hwnd, L"Clear Log", ID_BUTTON_CLEAR);
             create_button(hwnd, L"Exit", ID_BUTTON_EXIT);
+            create_button(hwnd, L"Tailscale Connect", ID_BUTTON_TAILSCALE);
+
+            tailscale_label = create_label(hwnd, L"Tailscale address");
+            tailscale_addr_edit =
+                CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                0, 0, 0, 0, hwnd,
+                                (HMENU) ID_TAILSCALE_ADDR, app_instance,
+                                NULL);
 
             devices_heading = create_label(hwnd, L"Devices");
             detail_heading = create_label(hwnd, L"Device Status");
@@ -2148,6 +2234,12 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     show_dashboard();
                     start_launcher_command(hwnd, VR_LAUNCHER_COMMAND_CONNECT);
                     return 0;
+                case ID_BUTTON_TAILSCALE:
+                case ID_TRAY_TAILSCALE:
+                    show_dashboard();
+                    start_launcher_command(hwnd,
+                                           VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT);
+                    return 0;
                 case ID_BUTTON_WIRELESS:
                 case ID_TRAY_WIRELESS:
                     show_dashboard();
@@ -2252,7 +2344,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     start_next_queued_file(hwnd);
                 } else if (done->mirror) {
                     set_status(done->exit_code == 0 ? L"Mirror stopped"
-                                                     : L"Mirror stopped");
+                                                     : L"Mirror failed");
                 } else {
                     set_status(done->exit_code == 0 ? L"Ready"
                                                      : L"Command failed");

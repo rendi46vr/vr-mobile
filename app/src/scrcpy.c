@@ -394,6 +394,7 @@ scrcpy(struct scrcpy_options *options) {
         .downsize_on_error = options->downsize_on_error,
         .tcpip = options->tcpip,
         .tcpip_dst = options->tcpip_dst,
+        .tailscale_dst = options->tailscale_dst,
         .connect_manager = options->connect_manager,
         .wireless_setup = options->wireless_setup,
         .connection_health = options->connection_health,

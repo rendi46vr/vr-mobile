@@ -135,7 +135,7 @@ vr_launcher_parse_devices(const char *output,
                           size_t max_devices) {
     size_t count;
     if (!vr_launcher_parse_connection_health(output, devices, max_devices,
-                                             &count, NULL, 0)) {
+                                             &count, NULL, 0, NULL, 0)) {
         return 0;
     }
 
@@ -147,7 +147,9 @@ vr_launcher_parse_connection_health(const char *output,
                                     struct vr_launcher_device_info *devices,
                                     size_t max_devices, size_t *device_count,
                                     char *last_wifi_serial,
-                                    size_t last_wifi_serial_len) {
+                                    size_t last_wifi_serial_len,
+                                    char *last_tailscale_serial,
+                                    size_t last_tailscale_serial_len) {
     const char *json = find_json_object(output, "\"devices\"");
     if (!json) {
         return false;
@@ -200,6 +202,14 @@ vr_launcher_parse_connection_health(const char *output,
         if (!json_extract_string(json, "last_wifi_serial", last_wifi_serial,
                                  last_wifi_serial_len)) {
             last_wifi_serial[0] = '\0';
+        }
+    }
+
+    if (last_tailscale_serial && last_tailscale_serial_len) {
+        if (!json_extract_string(json, "last_tailscale_serial",
+                                 last_tailscale_serial,
+                                 last_tailscale_serial_len)) {
+            last_tailscale_serial[0] = '\0';
         }
     }
 

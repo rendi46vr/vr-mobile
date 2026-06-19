@@ -922,6 +922,52 @@ sc_server_configure_tcpip_known_address(struct sc_server *server,
 }
 
 static bool
+sc_server_address_looks_ipv6(const char *addr) {
+    const char *first = strchr(addr, ':');
+    return first && strchr(first + 1, ':');
+}
+
+static bool
+sc_server_configure_tailscale(struct sc_server *server, const char *addr) {
+    char *saved_addr = NULL;
+    if (!addr || !*addr) {
+        saved_addr = sc_connect_manager_load_last_tailscale_serial();
+        if (!saved_addr) {
+            LOGE("No saved Tailscale device address.");
+            LOGE("Use --tailscale=100.x.y.z once, or enter the phone "
+                 "Tailscale IP/MagicDNS name in the desktop launcher.");
+            return false;
+        }
+        addr = saved_addr;
+        LOGI("Using saved Tailscale device: %s", addr);
+    }
+
+    if (sc_server_address_looks_ipv6(addr)) {
+        LOGE("Tailscale IPv6 addresses are not supported yet.");
+        LOGE("Use the device Tailscale IPv4 address, usually 100.x.y.z, or a "
+             "MagicDNS hostname.");
+        free(saved_addr);
+        return false;
+    }
+
+    LOGI("Connecting through Tailscale to %s...", addr);
+    bool ok = sc_server_configure_tcpip_known_address(server, addr, false);
+    if (ok) {
+        assert(server->serial);
+        sc_connect_manager_save_last_tailscale_serial(server->serial);
+        LOGI("Tailscale connected: %s", server->serial);
+    } else {
+        LOGE("Could not reach the Tailscale ADB device.");
+        LOGE("Check that Tailscale is online on both devices, the phone ADB "
+             "TCP/IP mode is enabled on port " SC_STR(SC_ADB_PORT_DEFAULT)
+             ", and the PC can reach the phone Tailscale address.");
+    }
+
+    free(saved_addr);
+    return ok;
+}
+
+static bool
 sc_server_configure_tcpip_unknown_address(struct sc_server *server,
                                           const char *serial) {
     bool is_already_tcpip =
@@ -1212,7 +1258,8 @@ sc_server_get_device_type_name(const char *serial) {
 
 static void
 sc_server_print_connection_health_json(const struct sc_vec_adb_devices *devices,
-                                       const char *last_wifi_serial) {
+                                       const char *last_wifi_serial,
+                                       const char *last_tailscale_serial) {
     fputs("{\"devices\":[", stdout);
     for (size_t i = 0; i < devices->size; ++i) {
         const struct sc_adb_device *device = &devices->data[i];
@@ -1231,6 +1278,8 @@ sc_server_print_connection_health_json(const struct sc_vec_adb_devices *devices,
     }
     fputs("],\"last_wifi_serial\":", stdout);
     sc_server_print_json_string(last_wifi_serial);
+    fputs(",\"last_tailscale_serial\":", stdout);
+    sc_server_print_json_string(last_tailscale_serial);
     fputs("}\n", stdout);
 }
 
@@ -1245,10 +1294,14 @@ sc_server_run_connection_health(struct sc_server *server) {
     }
 
     char *last_wifi_serial = sc_connect_manager_load_last_wifi_serial();
+    char *last_tailscale_serial =
+        sc_connect_manager_load_last_tailscale_serial();
 
     if (server->params.output_format == SC_OUTPUT_FORMAT_JSON) {
-        sc_server_print_connection_health_json(&devices, last_wifi_serial);
+        sc_server_print_connection_health_json(&devices, last_wifi_serial,
+                                               last_tailscale_serial);
         free(last_wifi_serial);
+        free(last_tailscale_serial);
         sc_adb_devices_destroy(&devices);
         return true;
     }
@@ -1271,6 +1324,12 @@ sc_server_run_connection_health(struct sc_server *server) {
         LOGI("Last saved Wi-Fi device: %s", last_wifi_serial);
         LOGI("Retry it with: scrcpy --connect-manager");
         free(last_wifi_serial);
+    }
+
+    if (last_tailscale_serial) {
+        LOGI("Last saved Tailscale device: %s", last_tailscale_serial);
+        LOGI("Retry it with: scrcpy --tailscale");
+        free(last_tailscale_serial);
     }
 
     sc_adb_devices_destroy(&devices);
@@ -1596,6 +1655,11 @@ run_server(void *data) {
         return 0;
     } else if (params->connect_manager != SC_CONNECT_MANAGER_DISABLED) {
         ok = sc_server_configure_connect_manager(server);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+    } else if (params->tailscale_dst) {
+        ok = sc_server_configure_tailscale(server, params->tailscale_dst);
         if (!ok) {
             goto error_connection_failed;
         }

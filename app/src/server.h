@@ -64,6 +64,7 @@ struct sc_server_params {
     bool downsize_on_error;
     bool tcpip;
     const char *tcpip_dst;
+    const char *tailscale_dst;
     enum sc_connect_manager_mode connect_manager;
     bool wireless_setup;
     bool connection_health;

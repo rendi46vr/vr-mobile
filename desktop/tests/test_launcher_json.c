@@ -29,18 +29,22 @@ static void
 test_parse_empty_connection_health(void) {
     const char *output =
         "scrcpy 4.0\n"
-        "{\"devices\":[],\"last_wifi_serial\":\"10.208.64.184:5555\"}\n";
+        "{\"devices\":[],\"last_wifi_serial\":\"10.208.64.184:5555\","
+        "\"last_tailscale_serial\":\"100.80.12.34:5555\"}\n";
 
     struct vr_launcher_device_info devices[VR_LAUNCHER_MAX_DEVICES];
     size_t count = 42;
     char last_wifi_serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+    char last_tailscale_serial[VR_LAUNCHER_MAX_SERIAL_LEN];
     bool ok = vr_launcher_parse_connection_health(
         output, devices, VR_LAUNCHER_MAX_DEVICES, &count, last_wifi_serial,
-        sizeof(last_wifi_serial));
+        sizeof(last_wifi_serial), last_tailscale_serial,
+        sizeof(last_tailscale_serial));
 
     assert(ok);
     assert(count == 0);
     assert(!strcmp("10.208.64.184:5555", last_wifi_serial));
+    assert(!strcmp("100.80.12.34:5555", last_tailscale_serial));
 }
 
 static void

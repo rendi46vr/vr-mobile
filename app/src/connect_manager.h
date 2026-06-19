@@ -47,4 +47,10 @@ sc_connect_manager_load_last_wifi_serial(void);
 bool
 sc_connect_manager_save_last_wifi_serial(const char *serial);
 
+char *
+sc_connect_manager_load_last_tailscale_serial(void);
+
+bool
+sc_connect_manager_save_last_tailscale_serial(const char *serial);
+
 #endif

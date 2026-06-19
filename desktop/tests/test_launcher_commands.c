@@ -66,8 +66,15 @@ test_dynamic_commands(void) {
                    vr_launcher_command_label(
                        VR_LAUNCHER_COMMAND_RUN_PROFILE)));
     assert(vr_launcher_command_arg_count(
-               VR_LAUNCHER_COMMAND_RUN_PROFILE) == 0);
+                VR_LAUNCHER_COMMAND_RUN_PROFILE) == 0);
     assert(!vr_launcher_command_args(VR_LAUNCHER_COMMAND_RUN_PROFILE));
+
+    assert(!strcmp("Tailscale connect",
+                   vr_launcher_command_label(
+                       VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT)));
+    assert(vr_launcher_command_arg_count(
+               VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT) == 0);
+    assert(!vr_launcher_command_args(VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT));
 
     assert(!strcmp("Send file",
                    vr_launcher_command_label(

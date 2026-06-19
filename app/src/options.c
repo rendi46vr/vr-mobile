@@ -104,6 +104,7 @@ const struct scrcpy_options scrcpy_options_default = {
     .downsize_on_error = true,
     .tcpip = false,
     .tcpip_dst = NULL,
+    .tailscale_dst = NULL,
     .connect_manager = SC_CONNECT_MANAGER_DISABLED,
     .wireless_setup = false,
     .auto_reconnect = false,

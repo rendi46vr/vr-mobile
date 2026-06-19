@@ -87,6 +87,7 @@ enum {
     OPT_KILL_ADB_ON_CLOSE,
     OPT_TIME_LIMIT,
     OPT_PAUSE_ON_EXIT,
+    OPT_TAILSCALE,
     OPT_LIST_CAMERAS,
     OPT_LIST_CAMERA_SIZES,
     OPT_CAMERA_ID,
@@ -382,6 +383,17 @@ static const struct sc_option options[] = {
         .longopt = "connection-health",
         .text = "Check ADB connection health and print user-facing hints, "
                 "then exit.",
+    },
+    {
+        .longopt_id = OPT_TAILSCALE,
+        .longopt = "tailscale",
+        .argdesc = "addr[:port]",
+        .optional_arg = true,
+        .text = "Connect to an Android device through Tailscale ADB.\n"
+                "Pass a Tailscale IPv4 address or MagicDNS hostname. If no "
+                "port is provided, port 5555 is used. If no address is "
+                "provided, the last saved Tailscale address is reused.\n"
+                "The phone must already have ADB TCP/IP mode enabled.",
     },
     {
         .longopt_id = OPT_CROP,
@@ -2919,6 +2931,13 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_CONNECTION_HEALTH:
                 opts->connection_health = true;
                 break;
+            case OPT_TAILSCALE:
+                if (optarg && !*optarg) {
+                    LOGE("Empty Tailscale address");
+                    return false;
+                }
+                opts->tailscale_dst = optarg ? optarg : "";
+                break;
             case OPT_WIRELESS_SETUP:
                 opts->wireless_setup = true;
                 break;
@@ -3199,11 +3218,11 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     if (opts->connection_health
             && (opts->connect_manager != SC_CONNECT_MANAGER_DISABLED
                 || opts->serial || opts->select_tcpip || opts->select_usb
-                || opts->tcpip || opts->wireless_setup || opts->list
-                || device_utility)) {
+                || opts->tcpip || opts->tailscale_dst || opts->wireless_setup
+                || opts->list || device_utility)) {
         LOGE("Cannot use --connection-health together with device selectors, "
-             "--connect-manager, --tcpip, --wireless-setup, --list-* or other "
-             "utility commands");
+             "--connect-manager, --tcpip, --tailscale, --wireless-setup, "
+             "--list-* or other utility commands");
         return false;
     }
 
@@ -3214,18 +3233,31 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
 
     if (opts->connect_manager != SC_CONNECT_MANAGER_DISABLED
             && (opts->serial || opts->select_tcpip || opts->select_usb
-                || opts->tcpip || opts->wireless_setup)) {
+                || opts->tcpip || opts->tailscale_dst || opts->wireless_setup)) {
         LOGE("Cannot use --connect-manager together with --serial, "
-             "--select-usb, --select-tcpip, --tcpip or --wireless-setup");
+             "--select-usb, --select-tcpip, --tcpip, --tailscale or "
+             "--wireless-setup");
         return false;
     }
 
     if (opts->wireless_setup
             && (opts->serial || opts->select_tcpip || opts->select_usb
-                || opts->tcpip || opts->list || utility_command)) {
+                || opts->tcpip || opts->tailscale_dst || opts->list
+                || utility_command)) {
         LOGE("Cannot use --wireless-setup together with --serial, "
-             "--select-usb, --select-tcpip, --tcpip, --list-* or utility "
-             "commands");
+             "--select-usb, --select-tcpip, --tcpip, --tailscale, --list-* "
+             "or utility commands");
+        return false;
+    }
+
+    if (opts->tailscale_dst
+            && (opts->serial || opts->select_tcpip || opts->select_usb
+                || opts->tcpip
+                || opts->connect_manager != SC_CONNECT_MANAGER_DISABLED
+                || opts->wireless_setup)) {
+        LOGE("Cannot use --tailscale together with --serial, --select-usb, "
+             "--select-tcpip, --tcpip, --connect-manager or "
+             "--wireless-setup");
         return false;
     }
 

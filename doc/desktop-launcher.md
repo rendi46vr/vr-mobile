@@ -32,6 +32,8 @@ Fitur v2:
    `scrcpy --serial=<serial>`.
  - Jika tidak ada device dipilih, `Connect` tetap memakai auto mode
    `scrcpy --connect-manager`.
+ - Field `Tailscale address` dan tombol `Tailscale Connect` untuk menjalankan
+   `scrcpy --tailscale=<addr>` atau `scrcpy --tailscale` jika field kosong.
 
 Fitur v3:
 
@@ -98,8 +100,11 @@ Smoke test manual:
  - Pilih satu device lalu klik `Device Status`.
  - Pastikan panel status menampilkan serial, model, Android version, IP,
    screen, battery, dan storage.
- - Klik `Connect` dan pastikan mirror scrcpy terbuka.
- - Saat mirror aktif, klik `Refresh Devices` atau `Device Status` dan pastikan
+  - Klik `Connect` dan pastikan mirror scrcpy terbuka.
+  - Isi `Tailscale address` dengan IP Tailscale/MagicDNS device, lalu klik
+    `Tailscale Connect`. Kosongkan field untuk mencoba last saved Tailscale
+    address.
+  - Saat mirror aktif, klik `Refresh Devices` atau `Device Status` dan pastikan
    command tetap bisa berjalan.
  - Buat profile baru, misalnya `xiaomi14`, isi argumen per baris, klik `Save`,
    lalu klik `Run`.

@@ -9,6 +9,8 @@
 #include "vr_config.h"
 
 #define SC_CONNECT_MANAGER_CONFIG_FILE "connect-manager-last-device"
+#define SC_CONNECT_MANAGER_TAILSCALE_CONFIG_FILE \
+    "connect-manager-last-tailscale"
 
 const char *
 sc_connect_manager_status_get_name(enum sc_connect_manager_status status) {
@@ -257,10 +259,9 @@ sc_connect_manager_trim_line(char *s) {
     *end = '\0';
 }
 
-char *
-sc_connect_manager_load_last_wifi_serial(void) {
-    char *path =
-        sc_vr_config_get_file(SC_CONNECT_MANAGER_CONFIG_FILE, false);
+static char *
+sc_connect_manager_load_serial_from_file(const char *name) {
+    char *path = sc_vr_config_get_file(name, false);
     if (!path) {
         return NULL;
     }
@@ -286,13 +287,25 @@ sc_connect_manager_load_last_wifi_serial(void) {
     return strdup(buf);
 }
 
-bool
-sc_connect_manager_save_last_wifi_serial(const char *serial) {
-    if (!serial || sc_adb_device_get_type(serial) != SC_ADB_DEVICE_TYPE_TCPIP) {
+char *
+sc_connect_manager_load_last_wifi_serial(void) {
+    return sc_connect_manager_load_serial_from_file(
+        SC_CONNECT_MANAGER_CONFIG_FILE);
+}
+
+char *
+sc_connect_manager_load_last_tailscale_serial(void) {
+    return sc_connect_manager_load_serial_from_file(
+        SC_CONNECT_MANAGER_TAILSCALE_CONFIG_FILE);
+}
+
+static bool
+sc_connect_manager_save_serial_to_file(const char *name, const char *serial) {
+    if (!serial || !*serial) {
         return false;
     }
 
-    char *path = sc_vr_config_get_file(SC_CONNECT_MANAGER_CONFIG_FILE, true);
+    char *path = sc_vr_config_get_file(name, true);
     if (!path) {
         return false;
     }
@@ -300,14 +313,30 @@ sc_connect_manager_save_last_wifi_serial(const char *serial) {
     FILE *file = fopen(path, "wb");
     free(path);
     if (!file) {
-        LOGW("Could not save last Wi-Fi device");
+        LOGW("Could not save connect manager device file: %s", name);
         return false;
     }
 
     bool ok = fprintf(file, "%s\n", serial) > 0;
     ok = !fclose(file) && ok;
     if (!ok) {
-        LOGW("Could not save last Wi-Fi device");
+        LOGW("Could not save connect manager device file: %s", name);
     }
     return ok;
+}
+
+bool
+sc_connect_manager_save_last_wifi_serial(const char *serial) {
+    if (!serial || sc_adb_device_get_type(serial) != SC_ADB_DEVICE_TYPE_TCPIP) {
+        return false;
+    }
+
+    return sc_connect_manager_save_serial_to_file(SC_CONNECT_MANAGER_CONFIG_FILE,
+                                                 serial);
+}
+
+bool
+sc_connect_manager_save_last_tailscale_serial(const char *serial) {
+    return sc_connect_manager_save_serial_to_file(
+        SC_CONNECT_MANAGER_TAILSCALE_CONFIG_FILE, serial);
 }

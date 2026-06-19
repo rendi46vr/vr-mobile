@@ -34,7 +34,9 @@ vr_launcher_parse_connection_health(const char *output,
                                     struct vr_launcher_device_info *devices,
                                     size_t max_devices, size_t *device_count,
                                     char *last_wifi_serial,
-                                    size_t last_wifi_serial_len);
+                                    size_t last_wifi_serial_len,
+                                    char *last_tailscale_serial,
+                                    size_t last_tailscale_serial_len);
 
 bool
 vr_launcher_parse_device_status(const char *output,

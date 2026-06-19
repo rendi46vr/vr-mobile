@@ -107,6 +107,41 @@ other on the network. Some routers or guest networks block peer-to-peer traffic
 between Wi-Fi clients.
 
 
+## VR Mobile Tailscale connect
+
+Tailscale can be used as an alternate wireless path when the phone and PC are
+not on the same LAN, or when the router blocks peer-to-peer Wi-Fi clients.
+
+First, enable ADB TCP/IP once while the phone is connected through USB:
+
+```bash
+scrcpy --wireless-setup
+```
+
+Then connect through the phone Tailscale IPv4 address or MagicDNS hostname:
+
+```bash
+scrcpy --tailscale=100.80.12.34
+scrcpy --tailscale=xiaomi.tailnet.ts.net
+```
+
+If no port is provided, VR Mobile uses ADB port `5555`. A successful Tailscale
+connection is saved separately from the LAN Wi-Fi address, so the next run may
+reuse it:
+
+```bash
+scrcpy --tailscale
+```
+
+Notes:
+
+ - Both the PC and phone must be online in the same Tailscale tailnet.
+ - The phone must still have ADB TCP/IP mode enabled on port `5555`.
+ - This v1 supports Tailscale IPv4 and MagicDNS hostnames. IPv6 Tailscale
+   addresses are intentionally not parsed yet because `host:port` handling would
+   be ambiguous.
+
+
 ## VR Mobile reconnect and utilities
 
 This fork includes first command-line foundations for the next VR Mobile UX
@@ -131,8 +166,9 @@ scrcpy --connection-health
 scrcpy --connection-health --output-format=json
 ```
 
-This prints detected ADB devices, their states, the last saved Wi-Fi device,
-and practical hints for common states like unauthorized or offline.
+This prints detected ADB devices, their states, the last saved Wi-Fi and
+Tailscale devices, and practical hints for common states like unauthorized or
+offline.
 
 Device status panel:
 
