@@ -137,14 +137,15 @@ Because Tailscale/VPN links are often heavier than local Wi-Fi, `--tailscale`
 automatically applies lightweight video defaults unless you explicitly override
 them:
 
- - `--max-size=1280`
- - `--max-fps=30`
- - `--video-bit-rate=2M`
+ - `--max-size=800`
+ - `--max-fps=24`
+ - `--video-bit-rate=1M`
+ - `--video-buffer=20`
 
 For slower networks, reduce them further:
 
 ```bash
-scrcpy --tailscale=100.80.12.34 --max-size=1024 --max-fps=15 --video-bit-rate=1M
+scrcpy --tailscale=100.80.12.34 --max-size=640 --max-fps=15 --video-bit-rate=800K --video-buffer=40
 ```
 
 Notes:

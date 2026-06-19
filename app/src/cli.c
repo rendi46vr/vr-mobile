@@ -20,9 +20,10 @@
 #define STR_IMPL_(x) #x
 #define STR(x) STR_IMPL_(x)
 
-#define SC_TAILSCALE_DEFAULT_MAX_SIZE 1280
-#define SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE 2000000
-#define SC_TAILSCALE_DEFAULT_MAX_FPS "30"
+#define SC_TAILSCALE_DEFAULT_MAX_SIZE 800
+#define SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE 1000000
+#define SC_TAILSCALE_DEFAULT_MAX_FPS "24"
+#define SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS 20
 
 enum {
     OPT_WINDOW_TITLE = 1000,
@@ -399,8 +400,8 @@ static const struct sc_option options[] = {
                 "provided, the last saved Tailscale address is reused.\n"
                 "The phone must already have ADB TCP/IP mode enabled.\n"
                 "For smoother VPN usage, VR Mobile applies lightweight "
-                "defaults unless explicitly overridden: max size 1280, max "
-                "FPS 30 and video bit rate 2M.",
+                "defaults unless explicitly overridden: max size 800, max "
+                "FPS 24, video bit rate 1M and video buffer 20 ms.",
     },
     {
         .longopt_id = OPT_CROP,
@@ -2447,7 +2448,8 @@ parse_connect_manager(const char *s, enum sc_connect_manager_mode *mode) {
 }
 
 static void
-apply_tailscale_video_defaults(struct scrcpy_options *opts) {
+apply_tailscale_video_defaults(struct scrcpy_options *opts,
+                               bool video_buffer_explicit) {
     bool applied = false;
 
     if (!opts->max_size) {
@@ -2465,11 +2467,19 @@ apply_tailscale_video_defaults(struct scrcpy_options *opts) {
         applied = true;
     }
 
+    if (!video_buffer_explicit && !opts->video_buffer) {
+        opts->video_buffer =
+            SC_TICK_FROM_MS(SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS);
+        applied = true;
+    }
+
     if (applied) {
         LOGI("Tailscale mode: using lightweight video defaults "
-             "(max-size=%u, max-fps=%s, video-bit-rate=2M). Override them "
-             "with --max-size, --max-fps or --video-bit-rate if needed.",
-             SC_TAILSCALE_DEFAULT_MAX_SIZE, SC_TAILSCALE_DEFAULT_MAX_FPS);
+             "(max-size=%u, max-fps=%s, video-bit-rate=1M, "
+             "video-buffer=%ums). Override them with --max-size, --max-fps, "
+             "--video-bit-rate or --video-buffer if needed.",
+             SC_TAILSCALE_DEFAULT_MAX_SIZE, SC_TAILSCALE_DEFAULT_MAX_FPS,
+             SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS);
     }
 }
 
@@ -2729,6 +2739,8 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     struct scrcpy_options *opts = &args->opts;
 
     optind = 0; // reset to start from the first argument in tests
+
+    bool video_buffer_explicit = false;
 
     int c;
     while ((c = getopt_long(argc, argv, optstring, longopts, NULL)) != -1) {
@@ -2999,6 +3011,7 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 if (!parse_buffering_time(optarg, &opts->video_buffer)) {
                     return false;
                 }
+                video_buffer_explicit = true;
                 break;
             case OPT_NO_CLIPBOARD_AUTOSYNC:
                 opts->clipboard_autosync = false;
@@ -3296,7 +3309,7 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     }
 
     if (opts->tailscale_dst) {
-        apply_tailscale_video_defaults(opts);
+        apply_tailscale_video_defaults(opts, video_buffer_explicit);
     }
 
     if (opts->auto_reconnect

@@ -6,6 +6,7 @@
 
 #include "cli.h"
 #include "options.h"
+#include "util/tick.h"
 
 static void test_flag_version(void) {
     struct scrcpy_cli_args args = {
@@ -179,9 +180,10 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, "100.80.12.34"));
-    assert(args.opts.max_size == 1280);
-    assert(!strcmp(args.opts.max_fps, "30"));
-    assert(args.opts.video_bit_rate == 2000000);
+    assert(args.opts.max_size == 800);
+    assert(!strcmp(args.opts.max_fps, "24"));
+    assert(args.opts.video_bit_rate == 1000000);
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(20));
 
     args.opts = scrcpy_options_default;
     char *argv_last[] = {"scrcpy", "--tailscale"};
@@ -190,9 +192,10 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, ""));
-    assert(args.opts.max_size == 1280);
-    assert(!strcmp(args.opts.max_fps, "30"));
-    assert(args.opts.video_bit_rate == 2000000);
+    assert(args.opts.max_size == 800);
+    assert(!strcmp(args.opts.max_fps, "24"));
+    assert(args.opts.video_bit_rate == 1000000);
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(20));
 
     args.opts = scrcpy_options_default;
     char *argv_override[] = {
@@ -201,6 +204,7 @@ static void test_tailscale_options(void) {
         "--max-size=1024",
         "--max-fps=15",
         "--video-bit-rate=1M",
+        "--video-buffer=0",
     };
 
     ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_override), argv_override);
@@ -208,6 +212,7 @@ static void test_tailscale_options(void) {
     assert(args.opts.max_size == 1024);
     assert(!strcmp(args.opts.max_fps, "15"));
     assert(args.opts.video_bit_rate == 1000000);
+    assert(args.opts.video_buffer == 0);
 
     args.opts = scrcpy_options_default;
     char *argv_conflict[] = {"scrcpy", "--tailscale=100.80.12.34",
