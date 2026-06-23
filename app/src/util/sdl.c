@@ -11,6 +11,7 @@
 
 #ifdef _WIN32
 typedef void (WINAPI *sc_drag_accept_files_fn)(HWND, BOOL);
+typedef HRESULT (WINAPI *sc_revoke_drag_drop_fn)(HWND);
 typedef BOOL (WINAPI *sc_change_window_message_filter_ex_fn)(
     HWND, UINT, DWORD, void *);
 
@@ -36,6 +37,24 @@ sc_sdl_enable_windows_file_drop(SDL_Window *window) {
     if (!hwnd) {
         LOGW("Could not get the Win32 window handle for file drop");
         return;
+    }
+
+    // SDL3 normally registers an OLE IDropTarget. Windows blocks OLE drag and
+    // drop from a non-elevated Explorer into an elevated process before SDL
+    // receives any event. Use the legacy WM_DROPFILES path instead; SDL's
+    // window procedure translates it to SDL_EVENT_DROP_FILE too.
+    HMODULE ole32 = LoadLibraryW(L"ole32.dll");
+    if (ole32) {
+        union {
+            FARPROC proc;
+            sc_revoke_drag_drop_fn fn;
+        } revoke_drop = {
+            .proc = GetProcAddress(ole32, "RevokeDragDrop"),
+        };
+        if (revoke_drop.fn) {
+            revoke_drop.fn(hwnd);
+        }
+        FreeLibrary(ole32);
     }
 
     HMODULE shell32 = LoadLibraryW(L"shell32.dll");
