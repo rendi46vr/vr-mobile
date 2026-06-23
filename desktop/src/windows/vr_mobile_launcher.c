@@ -309,6 +309,104 @@ get_launcher_path(WCHAR *out, size_t out_len) {
 }
 
 static bool
+token_is_elevated(HANDLE token) {
+    TOKEN_ELEVATION elevation;
+    DWORD size;
+    return GetTokenInformation(token, TokenElevation, &elevation,
+                               sizeof(elevation), &size)
+        && elevation.TokenIsElevated;
+}
+
+static bool
+process_is_elevated(void) {
+    HANDLE token;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return false;
+    }
+
+    bool elevated = token_is_elevated(token);
+    CloseHandle(token);
+    return elevated;
+}
+
+static bool
+relaunch_with_explorer_token(void) {
+    HWND shell_window = GetShellWindow();
+    if (!shell_window) {
+        return false;
+    }
+
+    DWORD shell_pid;
+    GetWindowThreadProcessId(shell_window, &shell_pid);
+    if (!shell_pid) {
+        return false;
+    }
+
+    HANDLE shell_process =
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, shell_pid);
+    if (!shell_process) {
+        return false;
+    }
+
+    HANDLE shell_token;
+    bool token_opened =
+        OpenProcessToken(shell_process,
+                         TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
+                         &shell_token);
+    CloseHandle(shell_process);
+    if (!token_opened) {
+        return false;
+    }
+
+    // Avoid a relaunch loop if Explorer itself is running elevated.
+    if (token_is_elevated(shell_token)) {
+        CloseHandle(shell_token);
+        return false;
+    }
+
+    WCHAR executable[MAX_FILE_PATH_CHARS];
+    if (!get_launcher_path(executable,
+                           sizeof(executable) / sizeof(executable[0]))) {
+        CloseHandle(shell_token);
+        return false;
+    }
+
+    WCHAR command_line[MAX_FILE_PATH_CHARS + 3];
+    int written = swprintf(command_line,
+                           sizeof(command_line) / sizeof(command_line[0]),
+                           L"\"%ls\"", executable);
+    if (written <= 0) {
+        CloseHandle(shell_token);
+        return false;
+    }
+
+    WCHAR cwd[MAX_FILE_PATH_CHARS];
+    DWORD cwd_len = GetCurrentDirectoryW(
+        sizeof(cwd) / sizeof(cwd[0]), cwd);
+    const WCHAR *working_directory =
+        cwd_len && cwd_len < sizeof(cwd) / sizeof(cwd[0]) ? cwd : NULL;
+
+    STARTUPINFOW startup;
+    ZeroMemory(&startup, sizeof(startup));
+    startup.cb = sizeof(startup);
+
+    PROCESS_INFORMATION process;
+    ZeroMemory(&process, sizeof(process));
+
+    bool launched = CreateProcessWithTokenW(
+        shell_token, 0, executable, command_line, CREATE_UNICODE_ENVIRONMENT,
+        NULL, working_directory, &startup, &process);
+    CloseHandle(shell_token);
+    if (!launched) {
+        return false;
+    }
+
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
+static bool
 find_scrcpy_path(WCHAR *out, size_t out_len) {
     WCHAR module_path[MAX_PATH];
     DWORD len = GetModuleFileNameW(NULL, module_path, MAX_PATH);
@@ -2387,6 +2485,18 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline,
         int show_cmd) {
     (void) prev_instance;
     (void) cmdline;
+
+    if (process_is_elevated()) {
+        if (relaunch_with_explorer_token()) {
+            return 0;
+        }
+
+        MessageBoxW(NULL,
+                    L"VR Mobile is running as Administrator. Windows may "
+                    L"block file drag and drop from Explorer. Close VR "
+                    L"Mobile and start it without Run as administrator.",
+                    L"VR Mobile permissions", MB_OK | MB_ICONWARNING);
+    }
 
     app_instance = instance;
     InitializeCriticalSection(&process_lock);

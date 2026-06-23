@@ -144,4 +144,6 @@ scrcpy --push-target=/sdcard/Movies/
 
 File drop requires control to be enabled, so it is unavailable with
 `--no-control`. On Windows, VR Mobile also enables Explorer drops when the
-mirror process is running with elevated permissions.
+mirror process is running with elevated permissions. The desktop launcher
+automatically restarts without Administrator privileges so that Explorer and
+the mirror use the same Windows integrity level.
