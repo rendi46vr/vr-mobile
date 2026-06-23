@@ -197,8 +197,9 @@ nanti memanggil flow yang sama.
 
 ## 7. File Transfer Drag & Drop
 
-**Status:** v2 implemented for desktop-to-phone drag and reverse transfer via
-`--pull-file=<remote-path> --pull-target=<local-path>`.
+**Status:** v3 implemented for desktop-to-phone drag, reverse transfer via
+`--pull-file=<remote-path> --pull-target=<local-path>`, dan pemilihan file
+Companion Outbox dari launcher Windows.
 
 **Masalah user:** transfer file lewat command line tidak natural untuk user
 desktop.
@@ -218,10 +219,11 @@ desktop.
 **Catatan implementasi awal:** v1 sudah bisa push file ke
 `/sdcard/Download/VR Phone Mirror/` dan install APK dengan `adb install -r`.
 V2 menambahkan tombol `Receive` di launcher untuk menarik file dari path Android
-ke lokasi pilihan di PC melalui `adb pull`. Drag langsung dari item di File
-Manager Android keluar dari window mirror masih membutuhkan companion APK agar
-URI file yang dipilih dapat dikirim ke desktop; scrcpy core hanya menerima
-video dan koordinat input.
+ke lokasi pilihan di PC melalui `adb pull`. V3 menambahkan Share target pada
+companion, Outbox MediaStore, snapshot ADB, serta daftar file pada panel
+Companion Windows. Drag langsung dari File Manager Android keluar dari window
+mirror tetap tidak tersedia karena scrcpy core hanya menerima video dan
+koordinat input; file manager Android tidak memberikan URI/path ke desktop.
 
 
 ## 8. Clipboard Sync Plus
@@ -250,9 +252,9 @@ phone` masih perlu UI state, tetapi fondasi data history sudah ada.
 
 ## 9. Notification Bridge
 
-**Status:** companion APK v1 started. Share receiver, local outbox, permission
-screen, dan local notification capture sudah tersedia. Desktop transport masih
-pending pairing protocol.
+**Status:** companion APK dan desktop bridge v2 implemented. Launcher membaca
+notifikasi melalui ADB shell, menampilkan Windows tray notification, membuka
+content intent, dan mengirim quick reply untuk action `RemoteInput`.
 
 **Masalah user:** user ingin melihat notifikasi HP di Windows tanpa selalu
 membuka layar mirror.
@@ -267,11 +269,12 @@ membuka layar mirror.
 **Integrasi scrcpy/ADB:** fitur ini tidak cukup hanya dengan scrcpy core. Perlu
 APK pendamping Android yang punya akses Notification Listener.
 
-**Catatan implementasi awal:** modul `companion` sekarang menyediakan
-`NotificationListenerService` opt-in dan menyimpan event terakhir secara lokal.
-Core scrcpy tetap menyediakan quick action `notification-panel`,
-`settings-panel`, dan `collapse-panels`. Pengiriman ke Windows belum diaktifkan
-sebelum ADB-forwarded pairing protocol dan filter privasi selesai.
+**Catatan implementasi awal:** modul `companion` menyediakan
+`NotificationListenerService` opt-in, antrean notifikasi aktif, serta provider
+bridge yang hanya menerima caller ADB shell. Panel Companion melakukan polling
+tiga detik setelah diaktifkan. Filter aplikasi dan riwayat persisten masih
+menjadi peningkatan berikutnya. Core scrcpy tetap menyediakan quick action
+`notification-panel`, `settings-panel`, dan `collapse-panels`.
 
 
 ## 10. Battery & Device Status Panel

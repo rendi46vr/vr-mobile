@@ -29,6 +29,7 @@
 #define ID_BUTTON_EXIT 1012
 #define ID_BUTTON_TAILSCALE 1013
 #define ID_BUTTON_PULL_FILE 1014
+#define ID_BUTTON_COMPANION 1015
 #define ID_LOG 1101
 #define ID_STATUS 1102
 #define ID_DEVICE_LIST 1103
@@ -40,6 +41,18 @@
 #define ID_TAILSCALE_ADDR 1109
 #define ID_PULL_REMOTE_PATH 1110
 
+#define ID_COMPANION_REFRESH 3001
+#define ID_COMPANION_RECEIVE 3002
+#define ID_COMPANION_OPEN 3003
+#define ID_COMPANION_REPLY 3004
+#define ID_COMPANION_FILE_LIST 3011
+#define ID_COMPANION_NOTIFICATION_LIST 3012
+#define ID_COMPANION_REPLY_TEXT 3013
+#define ID_COMPANION_STATUS 3014
+#define ID_COMPANION_FILES_HEADING 3020
+#define ID_COMPANION_NOTIFICATIONS_HEADING 3021
+#define ID_COMPANION_REPLY_HEADING 3022
+
 #define ID_TRAY_OPEN 2001
 #define ID_TRAY_CONNECT 2002
 #define ID_TRAY_DISCONNECT 2003
@@ -49,10 +62,14 @@
 #define ID_TRAY_AUTOSTART 2007
 #define ID_TRAY_EXIT 2008
 #define ID_TRAY_TAILSCALE 2009
+#define ID_TRAY_COMPANION 2010
 
 #define WM_VR_LOG (WM_APP + 1)
 #define WM_VR_DONE (WM_APP + 2)
 #define WM_VR_TRAY (WM_APP + 3)
+#define WM_VR_COMPANION_DONE (WM_APP + 4)
+
+#define ID_TIMER_COMPANION 4001
 
 #define VR_STATUS_DLL_NOT_FOUND 0xC0000135UL
 
@@ -104,6 +121,28 @@ struct command_done {
     size_t output_len;
 };
 
+enum companion_operation {
+    COMPANION_OPERATION_SNAPSHOT,
+    COMPANION_OPERATION_OPEN,
+    COMPANION_OPERATION_REPLY,
+};
+
+struct companion_runner {
+    HWND hwnd;
+    enum companion_operation operation;
+    WCHAR adb_path[MAX_FILE_PATH_CHARS];
+    char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+    char notification_key[1024];
+    char reply_text[4096];
+    int reply_action;
+};
+
+struct companion_done {
+    enum companion_operation operation;
+    DWORD exit_code;
+    char *output;
+};
+
 static HINSTANCE app_instance;
 static HWND main_window;
 static HWND title_label;
@@ -124,11 +163,17 @@ static HWND pull_remote_path_edit;
 static HWND device_list;
 static HWND detail_edit;
 static HWND log_edit;
+static HWND companion_window;
+static HWND companion_status;
+static HWND companion_file_list;
+static HWND companion_notification_list;
+static HWND companion_reply_edit;
 static HFONT title_font;
 static HFONT ui_font;
 static HFONT mono_font;
 static HANDLE mirror_process;
 static HANDLE utility_process;
+static HANDLE companion_process;
 static CRITICAL_SECTION process_lock;
 static struct vr_launcher_device_info devices[VR_LAUNCHER_MAX_DEVICES];
 static size_t device_count;
@@ -137,10 +182,24 @@ static size_t queued_file_count;
 static NOTIFYICONDATAW tray_icon;
 static bool tray_added;
 static bool exiting;
+static bool companion_busy;
+static bool companion_polling_enabled;
+static bool companion_snapshot_initialized;
+static struct vr_companion_snapshot companion_snapshot;
+static long long last_notification_time;
 static WNDPROC file_drop_edit_wndproc;
 
 static void
 show_dashboard(void);
+
+static void
+show_companion_window(HWND owner);
+
+static void
+receive_file_from_phone(HWND hwnd);
+
+static LRESULT CALLBACK
+companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 static void
 enqueue_file(HWND hwnd, const WCHAR *path);
@@ -582,6 +641,28 @@ set_adb_env_if_available(void) {
     }
 }
 
+static bool
+find_adb_path(WCHAR *out, size_t out_len) {
+    DWORD len = GetEnvironmentVariableW(L"ADB", out, (DWORD) out_len);
+    if (len && len < out_len && file_exists(out)) {
+        return true;
+    }
+
+    WCHAR localappdata[MAX_PATH];
+    len = GetEnvironmentVariableW(L"LOCALAPPDATA", localappdata,
+                                  sizeof(localappdata)
+                                      / sizeof(localappdata[0]));
+    if (len && len < sizeof(localappdata) / sizeof(localappdata[0])
+            && swprintf(out, out_len,
+                        L"%ls\\Android\\Sdk\\platform-tools\\adb.exe",
+                        localappdata) > 0 && file_exists(out)) {
+        return true;
+    }
+
+    len = SearchPathW(NULL, L"adb.exe", NULL, (DWORD) out_len, out, NULL);
+    return len && len < out_len && file_exists(out);
+}
+
 static void
 prepare_child_environment(const WCHAR *scrcpy_path) {
     WCHAR prefix[8192] = L"";
@@ -995,6 +1076,115 @@ append_wide_option_arg(WCHAR *cmdline, size_t len, const WCHAR *prefix,
 }
 
 static bool
+base64url_encode(const char *input, char *output, size_t output_len) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    size_t input_len = strlen(input);
+    size_t required = (input_len * 4 + 2) / 3;
+    if (required + 1 > output_len) {
+        return false;
+    }
+
+    size_t i = 0;
+    size_t j = 0;
+    while (i + 3 <= input_len) {
+        unsigned value = ((unsigned char) input[i] << 16)
+                       | ((unsigned char) input[i + 1] << 8)
+                       | (unsigned char) input[i + 2];
+        output[j++] = alphabet[(value >> 18) & 63];
+        output[j++] = alphabet[(value >> 12) & 63];
+        output[j++] = alphabet[(value >> 6) & 63];
+        output[j++] = alphabet[value & 63];
+        i += 3;
+    }
+
+    size_t remaining = input_len - i;
+    if (remaining == 1) {
+        unsigned value = (unsigned char) input[i] << 16;
+        output[j++] = alphabet[(value >> 18) & 63];
+        output[j++] = alphabet[(value >> 12) & 63];
+    } else if (remaining == 2) {
+        unsigned value = ((unsigned char) input[i] << 16)
+                       | ((unsigned char) input[i + 1] << 8);
+        output[j++] = alphabet[(value >> 18) & 63];
+        output[j++] = alphabet[(value >> 12) & 63];
+        output[j++] = alphabet[(value >> 6) & 63];
+    }
+    output[j] = '\0';
+    return true;
+}
+
+static bool
+build_companion_command_line(const struct companion_runner *runner,
+                             WCHAR *cmdline, size_t len) {
+    cmdline[0] = L'\0';
+    if (!append_quoted_arg(cmdline, len, runner->adb_path)
+            || !append_ascii_arg(cmdline, len, "-s")
+            || !append_ascii_arg(cmdline, len, runner->serial)
+            || !append_ascii_arg(cmdline, len, "shell")
+            || !append_ascii_arg(cmdline, len, "content")
+            || !append_ascii_arg(cmdline, len, "call")
+            || !append_ascii_arg(cmdline, len, "--uri")
+            || !append_ascii_arg(cmdline, len,
+                                 "content://com.vrmobile.companion.bridge")
+            || !append_ascii_arg(cmdline, len, "--method")) {
+        return false;
+    }
+
+    const char *method;
+    switch (runner->operation) {
+        case COMPANION_OPERATION_SNAPSHOT:
+            method = "snapshot";
+            break;
+        case COMPANION_OPERATION_OPEN:
+            method = "notification_open";
+            break;
+        case COMPANION_OPERATION_REPLY:
+            method = "notification_reply";
+            break;
+        default:
+            return false;
+    }
+    if (!append_ascii_arg(cmdline, len, method)) {
+        return false;
+    }
+
+    if (runner->operation == COMPANION_OPERATION_SNAPSHOT) {
+        return true;
+    }
+
+    char encoded_key[1400];
+    char key_extra[1420];
+    if (!base64url_encode(runner->notification_key, encoded_key,
+                          sizeof(encoded_key))
+            || snprintf(key_extra, sizeof(key_extra), "key:s:%s",
+                        encoded_key) < 0
+            || !append_ascii_arg(cmdline, len, "--extra")
+            || !append_ascii_arg(cmdline, len, key_extra)) {
+        return false;
+    }
+
+    if (runner->operation == COMPANION_OPERATION_REPLY) {
+        char encoded_text[5500];
+        char text_extra[5520];
+        char action_extra[64];
+        if (!base64url_encode(runner->reply_text, encoded_text,
+                              sizeof(encoded_text))
+                || snprintf(text_extra, sizeof(text_extra), "text:s:%s",
+                            encoded_text) < 0
+                || snprintf(action_extra, sizeof(action_extra),
+                            "action:i:%d", runner->reply_action) < 0
+                || !append_ascii_arg(cmdline, len, "--extra")
+                || !append_ascii_arg(cmdline, len, action_extra)
+                || !append_ascii_arg(cmdline, len, "--extra")
+                || !append_ascii_arg(cmdline, len, text_extra)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool
 append_launcher_args(WCHAR *cmdline, size_t len,
                      enum vr_launcher_command command) {
     const char *const *args = vr_launcher_command_args(command);
@@ -1095,6 +1285,9 @@ clear_process_slot(HANDLE process) {
     }
     if (utility_process == process) {
         utility_process = NULL;
+    }
+    if (companion_process == process) {
+        companion_process = NULL;
     }
     LeaveCriticalSection(&process_lock);
 }
@@ -1204,6 +1397,83 @@ end_without_process:
     }
     HeapFree(GetProcessHeap(), 0, runner);
     return 1;
+}
+
+static DWORD WINAPI
+companion_thread(LPVOID userdata) {
+    struct companion_runner *runner = userdata;
+    WCHAR cmdline[MAX_FILE_PATH_CHARS];
+    DWORD exit_code = 1;
+    struct output_buffer output = {0};
+
+    if (!build_companion_command_line(
+            runner, cmdline, sizeof(cmdline) / sizeof(cmdline[0]))) {
+        goto done;
+    }
+
+    SECURITY_ATTRIBUTES pipe_attrs = {
+        .nLength = sizeof(pipe_attrs),
+        .lpSecurityDescriptor = NULL,
+        .bInheritHandle = TRUE,
+    };
+    HANDLE read_pipe;
+    HANDLE write_pipe;
+    if (!CreatePipe(&read_pipe, &write_pipe, &pipe_attrs, 0)) {
+        goto done;
+    }
+    SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW startup;
+    ZeroMemory(&startup, sizeof(startup));
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = write_pipe;
+    startup.hStdError = write_pipe;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION process;
+    ZeroMemory(&process, sizeof(process));
+    BOOL started = CreateProcessW(
+        runner->adb_path, cmdline, NULL, NULL, TRUE, CREATE_NO_WINDOW,
+        NULL, NULL, &startup, &process);
+    CloseHandle(write_pipe);
+    if (!started) {
+        CloseHandle(read_pipe);
+        goto done;
+    }
+
+    EnterCriticalSection(&process_lock);
+    companion_process = process.hProcess;
+    LeaveCriticalSection(&process_lock);
+    CloseHandle(process.hThread);
+
+    char buffer[2048];
+    DWORD read;
+    while (ReadFile(read_pipe, buffer, sizeof(buffer), &read, NULL) && read) {
+        output_buffer_append(&output, buffer, read);
+    }
+    CloseHandle(read_pipe);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    GetExitCodeProcess(process.hProcess, &exit_code);
+    clear_process_slot(process.hProcess);
+    CloseHandle(process.hProcess);
+
+done:
+    {
+        struct companion_done *result =
+            HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*result));
+        if (result) {
+            result->operation = runner->operation;
+            result->exit_code = exit_code;
+            result->output = output.data;
+            PostMessageW(runner->hwnd, WM_VR_COMPANION_DONE, 0,
+                         (LPARAM) result);
+        } else {
+            HeapFree(GetProcessHeap(), 0, output.data);
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, runner);
+    return exit_code;
 }
 
 static bool
@@ -1362,6 +1632,272 @@ update_detail_from_status(const char *output) {
              status.storage_line[0] ? status.storage_line : "-");
 
     set_detail(detail);
+}
+
+static bool
+utf8_to_wide_buffer(const char *input, WCHAR *output, size_t output_len) {
+    int converted = MultiByteToWideChar(CP_UTF8, 0, input, -1, output,
+                                        (int) output_len);
+    if (converted <= 0 && output_len) {
+        output[0] = L'\0';
+        return false;
+    }
+    return true;
+}
+
+static void
+single_line(WCHAR *text) {
+    for (WCHAR *p = text; *p; ++p) {
+        if (*p == L'\r' || *p == L'\n' || *p == L'\t') {
+            *p = L' ';
+        }
+    }
+}
+
+static bool
+get_companion_serial(char *out, size_t out_len) {
+    if (get_selected_serial(out, out_len)) {
+        return true;
+    }
+
+    WCHAR address[512];
+    GetWindowTextW(tailscale_addr_edit, address,
+                   sizeof(address) / sizeof(address[0]));
+    trim_wide_in_place(address);
+    if (!address[0]) {
+        return false;
+    }
+
+    char utf8[512];
+    if (!wide_to_utf8(address, utf8, sizeof(utf8))) {
+        return false;
+    }
+    if (!strchr(utf8, ':')) {
+        return snprintf(out, out_len, "%s:5555", utf8) > 0;
+    }
+    return snprintf(out, out_len, "%s", utf8) > 0;
+}
+
+static void
+set_companion_status(const WCHAR *text) {
+    if (companion_status) {
+        SetWindowTextW(companion_status, text);
+    }
+}
+
+static void
+show_companion_tray_notification(
+        const struct vr_companion_notification *notification) {
+    if (!tray_added) {
+        return;
+    }
+
+    WCHAR title[256];
+    WCHAR text[256];
+    const char *title_utf8 = notification->title[0]
+                           ? notification->title
+                           : notification->package_name;
+    utf8_to_wide_buffer(title_utf8, title,
+                        sizeof(title) / sizeof(title[0]));
+    utf8_to_wide_buffer(notification->text, text,
+                        sizeof(text) / sizeof(text[0]));
+    single_line(title);
+    single_line(text);
+
+    tray_icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_INFO;
+    wcsncpy(tray_icon.szInfoTitle, title,
+            sizeof(tray_icon.szInfoTitle) / sizeof(tray_icon.szInfoTitle[0]) - 1);
+    tray_icon.szInfoTitle[
+        sizeof(tray_icon.szInfoTitle) / sizeof(tray_icon.szInfoTitle[0]) - 1]
+        = L'\0';
+    wcsncpy(tray_icon.szInfo, text,
+            sizeof(tray_icon.szInfo) / sizeof(tray_icon.szInfo[0]) - 1);
+    tray_icon.szInfo[
+        sizeof(tray_icon.szInfo) / sizeof(tray_icon.szInfo[0]) - 1] = L'\0';
+    tray_icon.dwInfoFlags = NIIF_INFO;
+    tray_icon.uTimeout = 5000;
+    Shell_NotifyIconW(NIM_MODIFY, &tray_icon);
+}
+
+static void
+refresh_companion_lists(void) {
+    if (!companion_window) {
+        return;
+    }
+
+    SendMessageW(companion_file_list, LB_RESETCONTENT, 0, 0);
+    for (size_t i = 0; i < companion_snapshot.file_count; ++i) {
+        const struct vr_companion_file *file = &companion_snapshot.files[i];
+        WCHAR name[512];
+        WCHAR label[640];
+        utf8_to_wide_buffer(file->name, name, sizeof(name) / sizeof(name[0]));
+        double megabytes = (double) file->size / (1024.0 * 1024.0);
+        swprintf(label, sizeof(label) / sizeof(label[0]), L"%ls  (%.2f MB)",
+                 name, megabytes);
+        SendMessageW(companion_file_list, LB_ADDSTRING, 0, (LPARAM) label);
+    }
+    if (companion_snapshot.file_count) {
+        SendMessageW(companion_file_list, LB_SETCURSEL, 0, 0);
+    }
+
+    SendMessageW(companion_notification_list, LB_RESETCONTENT, 0, 0);
+    for (size_t i = 0; i < companion_snapshot.notification_count; ++i) {
+        const struct vr_companion_notification *notification =
+            &companion_snapshot.notifications[i];
+        WCHAR package_name[256];
+        WCHAR title[1024];
+        WCHAR label[1400];
+        utf8_to_wide_buffer(notification->package_name, package_name,
+                            sizeof(package_name) / sizeof(package_name[0]));
+        utf8_to_wide_buffer(notification->title, title,
+                            sizeof(title) / sizeof(title[0]));
+        single_line(title);
+        swprintf(label, sizeof(label) / sizeof(label[0]), L"%ls  |  %ls%ls",
+                 package_name, title[0] ? title : L"(no title)",
+                 notification->reply_action >= 0 ? L"  [Reply]" : L"");
+        SendMessageW(companion_notification_list, LB_ADDSTRING, 0,
+                     (LPARAM) label);
+    }
+    if (companion_snapshot.notification_count) {
+        SendMessageW(companion_notification_list, LB_SETCURSEL, 0, 0);
+    }
+
+    WCHAR status[256];
+    swprintf(status, sizeof(status) / sizeof(status[0]),
+             L"Connected: %zu outbox file(s), %zu active notification(s).",
+             companion_snapshot.file_count,
+             companion_snapshot.notification_count);
+    set_companion_status(status);
+}
+
+static bool
+start_companion_operation(enum companion_operation operation,
+                          const struct vr_companion_notification *notification,
+                          const char *reply_text) {
+    if (companion_busy) {
+        return false;
+    }
+
+    struct companion_runner *runner =
+        HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*runner));
+    if (!runner) {
+        return false;
+    }
+    runner->hwnd = main_window;
+    runner->operation = operation;
+    if (!find_adb_path(runner->adb_path,
+                       sizeof(runner->adb_path) / sizeof(runner->adb_path[0]))) {
+        HeapFree(GetProcessHeap(), 0, runner);
+        set_companion_status(L"adb.exe was not found.");
+        return false;
+    }
+    if (!get_companion_serial(runner->serial, sizeof(runner->serial))) {
+        HeapFree(GetProcessHeap(), 0, runner);
+        set_companion_status(
+            L"Select a device or enter its Tailscale address first.");
+        return false;
+    }
+    if (notification) {
+        snprintf(runner->notification_key,
+                 sizeof(runner->notification_key), "%s", notification->key);
+        runner->reply_action = notification->reply_action;
+    }
+    if (reply_text) {
+        snprintf(runner->reply_text, sizeof(runner->reply_text), "%s",
+                 reply_text);
+    }
+
+    companion_busy = true;
+    HANDLE thread = CreateThread(NULL, 0, companion_thread, runner, 0, NULL);
+    if (!thread) {
+        companion_busy = false;
+        HeapFree(GetProcessHeap(), 0, runner);
+        set_companion_status(L"Could not start the companion command.");
+        return false;
+    }
+    CloseHandle(thread);
+    if (operation == COMPANION_OPERATION_SNAPSHOT) {
+        set_companion_status(L"Refreshing companion data...");
+    } else if (operation == COMPANION_OPERATION_OPEN) {
+        set_companion_status(L"Opening notification on Android...");
+    } else {
+        set_companion_status(L"Sending reply...");
+    }
+    return true;
+}
+
+static void
+start_companion_refresh(void) {
+    start_companion_operation(COMPANION_OPERATION_SNAPSHOT, NULL, NULL);
+}
+
+static int
+selected_companion_notification(void) {
+    int selected = (int) SendMessageW(companion_notification_list,
+                                      LB_GETCURSEL, 0, 0);
+    return selected >= 0
+            && (size_t) selected < companion_snapshot.notification_count
+        ? selected : -1;
+}
+
+static void
+open_selected_companion_notification(void) {
+    int selected = selected_companion_notification();
+    if (selected < 0) {
+        set_companion_status(L"Select a notification first.");
+        return;
+    }
+    const struct vr_companion_notification *notification =
+        &companion_snapshot.notifications[selected];
+    if (!notification->can_open) {
+        set_companion_status(L"This notification has no open action.");
+        return;
+    }
+    start_companion_operation(COMPANION_OPERATION_OPEN, notification, NULL);
+}
+
+static void
+reply_to_selected_companion_notification(void) {
+    int selected = selected_companion_notification();
+    if (selected < 0) {
+        set_companion_status(L"Select a notification first.");
+        return;
+    }
+    const struct vr_companion_notification *notification =
+        &companion_snapshot.notifications[selected];
+    if (notification->reply_action < 0) {
+        set_companion_status(L"This notification does not support quick reply.");
+        return;
+    }
+
+    WCHAR wide[4096];
+    char utf8[4096];
+    GetWindowTextW(companion_reply_edit, wide,
+                   sizeof(wide) / sizeof(wide[0]));
+    trim_wide_in_place(wide);
+    if (!wide[0] || !wide_to_utf8(wide, utf8, sizeof(utf8))) {
+        set_companion_status(L"Enter reply text first.");
+        return;
+    }
+    start_companion_operation(COMPANION_OPERATION_REPLY, notification, utf8);
+}
+
+static void
+receive_selected_companion_file(void) {
+    int selected = (int) SendMessageW(companion_file_list, LB_GETCURSEL, 0, 0);
+    if (selected < 0 || (size_t) selected >= companion_snapshot.file_count) {
+        set_companion_status(L"Select an outbox file first.");
+        return;
+    }
+
+    WCHAR path[2048];
+    if (!utf8_to_wide_buffer(companion_snapshot.files[selected].path, path,
+                             sizeof(path) / sizeof(path[0]))) {
+        set_companion_status(L"The Android file path is invalid.");
+        return;
+    }
+    SetWindowTextW(pull_remote_path_edit, path);
+    receive_file_from_phone(main_window);
 }
 
 static bool
@@ -2089,15 +2625,19 @@ resize_controls(HWND hwnd) {
     x = margin;
     int tailscale_label_w = 130;
     int tailscale_button_w = 170;
+    int companion_button_w = 120;
     MoveWindow(tailscale_label, x, y, tailscale_label_w, button_h, TRUE);
     x += tailscale_label_w + gap;
     MoveWindow(tailscale_addr_edit, x, y,
                width - (2 * margin) - tailscale_label_w
-                   - tailscale_button_w - (2 * gap),
+                   - tailscale_button_w - companion_button_w - (3 * gap),
                button_h, TRUE);
-    x = width - margin - tailscale_button_w;
+    x = width - margin - tailscale_button_w - companion_button_w - gap;
     MoveWindow(GetDlgItem(hwnd, ID_BUTTON_TAILSCALE), x, y,
                tailscale_button_w, button_h, TRUE);
+    x += tailscale_button_w + gap;
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_COMPANION), x, y,
+               companion_button_w, button_h, TRUE);
 
     y += button_h + gap;
 
@@ -2218,6 +2758,7 @@ apply_fonts(HWND hwnd) {
     set_font(GetDlgItem(hwnd, ID_BUTTON_DISCONNECT), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_CLEAR), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_EXIT), ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_COMPANION), ui_font);
     set_font(GetDlgItem(hwnd, ID_CHECK_AUTOSTART), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_REFRESH), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_SAVE), ui_font);
@@ -2277,6 +2818,7 @@ show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, ID_TRAY_CONNECT, L"Connect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_TAILSCALE, L"Tailscale connect");
+    AppendMenuW(menu, MF_STRING, ID_TRAY_COMPANION, L"Companion bridge");
     AppendMenuW(menu, MF_STRING, ID_TRAY_DISCONNECT, L"Disconnect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_REFRESH, L"Refresh devices");
     AppendMenuW(menu, MF_STRING, ID_TRAY_STATUS, L"Device status");
@@ -2311,9 +2853,268 @@ toggle_autostart(void) {
 static void
 exit_application(HWND hwnd) {
     exiting = true;
+    KillTimer(hwnd, ID_TIMER_COMPANION);
     terminate_process_slot(&mirror_process);
     terminate_process_slot(&utility_process);
+    terminate_process_slot(&companion_process);
     DestroyWindow(hwnd);
+}
+
+static void
+resize_companion_controls(HWND hwnd) {
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    const int margin = 16;
+    const int gap = 10;
+    const int button_h = 34;
+    const int heading_h = 22;
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+    int half = (width - (2 * margin) - gap) / 2;
+
+    MoveWindow(companion_status, margin, margin,
+               width - (2 * margin) - 110, button_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_REFRESH), width - margin - 100,
+               margin, 100, button_h, TRUE);
+
+    int y = margin + button_h + gap;
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_FILES_HEADING), margin, y,
+               half, heading_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_NOTIFICATIONS_HEADING),
+               margin + half + gap, y, half, heading_h, TRUE);
+    y += heading_h;
+
+    int list_h = height - y - button_h - gap - heading_h - button_h
+               - gap - margin;
+    if (list_h < 120) {
+        list_h = 120;
+    }
+    MoveWindow(companion_file_list, margin, y, half, list_h, TRUE);
+    MoveWindow(companion_notification_list, margin + half + gap, y,
+               half, list_h, TRUE);
+    y += list_h + gap;
+
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_RECEIVE), margin, y, half,
+               button_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_OPEN), margin + half + gap, y,
+               half, button_h, TRUE);
+    y += button_h + gap;
+
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_REPLY_HEADING), margin, y,
+               90, heading_h, TRUE);
+    MoveWindow(companion_reply_edit, margin + 90, y,
+               width - (2 * margin) - 90 - 120 - gap, button_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, ID_COMPANION_REPLY), width - margin - 120, y,
+               120, button_h, TRUE);
+}
+
+static HWND
+create_companion_control(HWND parent, const WCHAR *class_name,
+                         const WCHAR *label, DWORD style, DWORD ex_style,
+                         int id) {
+    return CreateWindowExW(ex_style, class_name, label,
+                           WS_CHILD | WS_VISIBLE | style,
+                           0, 0, 0, 0, parent,
+                           (HMENU) (uintptr_t) id, app_instance, NULL);
+}
+
+static LRESULT CALLBACK
+companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    switch (msg) {
+        case WM_CREATE:
+            companion_status = create_companion_control(
+                hwnd, L"STATIC", L"Select a device, then click Refresh.",
+                SS_LEFT, 0, ID_COMPANION_STATUS);
+            create_companion_control(hwnd, L"BUTTON", L"Refresh",
+                                     BS_PUSHBUTTON, 0, ID_COMPANION_REFRESH);
+            create_companion_control(hwnd, L"STATIC", L"Outbox files",
+                                     SS_LEFT, 0,
+                                     ID_COMPANION_FILES_HEADING);
+            create_companion_control(hwnd, L"STATIC", L"Notifications",
+                                     SS_LEFT, 0,
+                                     ID_COMPANION_NOTIFICATIONS_HEADING);
+            companion_file_list = create_companion_control(
+                hwnd, L"LISTBOX", L"", WS_VSCROLL | LBS_NOTIFY
+                    | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
+                ID_COMPANION_FILE_LIST);
+            companion_notification_list = create_companion_control(
+                hwnd, L"LISTBOX", L"", WS_VSCROLL | LBS_NOTIFY
+                    | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
+                ID_COMPANION_NOTIFICATION_LIST);
+            create_companion_control(hwnd, L"BUTTON", L"Receive selected",
+                                     BS_PUSHBUTTON, 0,
+                                     ID_COMPANION_RECEIVE);
+            create_companion_control(hwnd, L"BUTTON", L"Open on Android",
+                                     BS_PUSHBUTTON, 0, ID_COMPANION_OPEN);
+            create_companion_control(hwnd, L"STATIC", L"Quick reply",
+                                     SS_LEFT, 0,
+                                     ID_COMPANION_REPLY_HEADING);
+            companion_reply_edit = create_companion_control(
+                hwnd, L"EDIT", L"", ES_AUTOHSCROLL, WS_EX_CLIENTEDGE,
+                ID_COMPANION_REPLY_TEXT);
+            create_companion_control(hwnd, L"BUTTON", L"Send reply",
+                                     BS_PUSHBUTTON, 0, ID_COMPANION_REPLY);
+
+            for (int id = ID_COMPANION_REFRESH;
+                    id <= ID_COMPANION_STATUS; ++id) {
+                HWND control = GetDlgItem(hwnd, id);
+                if (control) {
+                    set_font(control, ui_font);
+                }
+            }
+            set_font(GetDlgItem(hwnd, ID_COMPANION_FILES_HEADING), ui_font);
+            set_font(GetDlgItem(hwnd, ID_COMPANION_NOTIFICATIONS_HEADING),
+                     ui_font);
+            set_font(GetDlgItem(hwnd, ID_COMPANION_REPLY_HEADING), ui_font);
+            resize_companion_controls(hwnd);
+            return 0;
+
+        case WM_SIZE:
+            resize_companion_controls(hwnd);
+            return 0;
+
+        case WM_COMMAND:
+            if (LOWORD(wparam) == ID_COMPANION_NOTIFICATION_LIST
+                    && HIWORD(wparam) == LBN_DBLCLK) {
+                open_selected_companion_notification();
+                return 0;
+            }
+            if (LOWORD(wparam) == ID_COMPANION_FILE_LIST
+                    && HIWORD(wparam) == LBN_DBLCLK) {
+                receive_selected_companion_file();
+                return 0;
+            }
+            switch (LOWORD(wparam)) {
+                case ID_COMPANION_REFRESH:
+                    start_companion_refresh();
+                    return 0;
+                case ID_COMPANION_RECEIVE:
+                    receive_selected_companion_file();
+                    return 0;
+                case ID_COMPANION_OPEN:
+                    open_selected_companion_notification();
+                    return 0;
+                case ID_COMPANION_REPLY:
+                    reply_to_selected_companion_notification();
+                    return 0;
+            }
+            break;
+
+        case WM_CLOSE:
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+
+        case WM_DESTROY:
+            companion_window = NULL;
+            companion_status = NULL;
+            companion_file_list = NULL;
+            companion_notification_list = NULL;
+            companion_reply_edit = NULL;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+static void
+show_companion_window(HWND owner) {
+    if (!companion_window) {
+        WNDCLASSW wc;
+        ZeroMemory(&wc, sizeof(wc));
+        wc.lpfnWndProc = companion_window_proc;
+        wc.hInstance = app_instance;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+        wc.lpszClassName = L"VRMobileCompanionWindow";
+        if (!RegisterClassW(&wc)
+                && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            append_log_line(L"Could not register companion window class.");
+            return;
+        }
+
+        companion_window = CreateWindowExW(
+            0, wc.lpszClassName, L"VR Mobile Companion Bridge",
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 900, 560,
+            owner, NULL, app_instance, NULL);
+        if (!companion_window) {
+            append_log_line(L"Could not create companion bridge window.");
+            return;
+        }
+    }
+
+    ShowWindow(companion_window, SW_SHOW);
+    ShowWindow(companion_window, SW_RESTORE);
+    SetForegroundWindow(companion_window);
+    companion_polling_enabled = true;
+    SetTimer(main_window, ID_TIMER_COMPANION, 3000, NULL);
+    start_companion_refresh();
+}
+
+static void
+handle_companion_done(struct companion_done *done) {
+    companion_busy = false;
+    if (done->exit_code != 0 || !done->output) {
+        set_companion_status(
+            L"Companion command failed. Check ADB/device connection.");
+        append_log_line(L"Companion bridge command failed.");
+        return;
+    }
+
+    if (done->operation == COMPANION_OPERATION_SNAPSHOT) {
+        if (!vr_launcher_parse_companion_snapshot(done->output,
+                                                  &companion_snapshot)) {
+            set_companion_status(
+                L"Companion not found or returned an invalid response.");
+            return;
+        }
+        if (!companion_snapshot.enabled) {
+            WCHAR error[512];
+            if (companion_snapshot.error[0]
+                    && utf8_to_wide_buffer(
+                        companion_snapshot.error, error,
+                        sizeof(error) / sizeof(error[0]))) {
+                set_companion_status(error);
+            } else {
+                set_companion_status(
+                    L"Enable Desktop bridge in the Android companion app.");
+            }
+            return;
+        }
+
+        if (companion_snapshot.notification_count) {
+            const struct vr_companion_notification *newest = NULL;
+            for (size_t i = 0;
+                    i < companion_snapshot.notification_count; ++i) {
+                const struct vr_companion_notification *candidate =
+                    &companion_snapshot.notifications[i];
+                if (!newest || candidate->post_time > newest->post_time) {
+                    newest = candidate;
+                }
+            }
+            if (companion_snapshot_initialized
+                    && newest->post_time > last_notification_time) {
+                show_companion_tray_notification(newest);
+            }
+            if (newest->post_time > last_notification_time) {
+                last_notification_time = newest->post_time;
+            }
+        }
+        companion_snapshot_initialized = true;
+        refresh_companion_lists();
+        return;
+    }
+
+    bool success = false;
+    if (!vr_launcher_parse_companion_action_result(done->output, &success)
+            || !success) {
+        set_companion_status(L"Android rejected the notification action.");
+        return;
+    }
+    if (done->operation == COMPANION_OPERATION_REPLY) {
+        SetWindowTextW(companion_reply_edit, L"");
+        set_companion_status(L"Reply sent through Android.");
+    } else {
+        set_companion_status(L"Notification opened on Android.");
+    }
 }
 
 static LRESULT CALLBACK
@@ -2340,6 +3141,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             create_button(hwnd, L"Clear Log", ID_BUTTON_CLEAR);
             create_button(hwnd, L"Exit", ID_BUTTON_EXIT);
             create_button(hwnd, L"Tailscale Connect", ID_BUTTON_TAILSCALE);
+            create_button(hwnd, L"Companion", ID_BUTTON_COMPANION);
 
             tailscale_label = create_label(hwnd, L"Tailscale address");
             tailscale_addr_edit =
@@ -2515,6 +3317,10 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 case ID_BUTTON_PULL_FILE:
                     receive_file_from_phone(hwnd);
                     return 0;
+                case ID_BUTTON_COMPANION:
+                case ID_TRAY_COMPANION:
+                    show_companion_window(hwnd);
+                    return 0;
                 case ID_TRAY_OPEN:
                     show_dashboard();
                     return 0;
@@ -2531,10 +3337,23 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_VR_TRAY:
             if (lparam == WM_LBUTTONDBLCLK) {
                 show_dashboard();
+            } else if (lparam == NIN_BALLOONUSERCLICK) {
+                show_companion_window(hwnd);
             } else if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
                 show_tray_menu(hwnd);
             }
             return 0;
+
+        case WM_TIMER:
+            if (wparam == ID_TIMER_COMPANION && companion_polling_enabled
+                    && !companion_busy) {
+                char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+                if (get_companion_serial(serial, sizeof(serial))) {
+                    start_companion_refresh();
+                }
+                return 0;
+            }
+            break;
 
         case WM_VR_LOG:
             append_log_text((WCHAR *) lparam);
@@ -2588,6 +3407,16 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                                      : L"Command failed");
                 }
 
+                HeapFree(GetProcessHeap(), 0, done->output);
+                HeapFree(GetProcessHeap(), 0, done);
+            }
+            return 0;
+
+        case WM_VR_COMPANION_DONE:
+            {
+                struct companion_done *done =
+                    (struct companion_done *) lparam;
+                handle_companion_done(done);
                 HeapFree(GetProcessHeap(), 0, done->output);
                 HeapFree(GetProcessHeap(), 0, done);
             }

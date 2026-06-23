@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="share_reading">Reading shared files...</string>
+    <string name="share_reading">Reading shared files&#8230;</string>
     <plurals name="share_preparing">
-        <item quantity="one">Preparing %1$d file...</item>
-        <item quantity="other">Preparing %1$d files...</item>
+        <item quantity="one">Preparing %1$d file&#8230;</item>
+        <item quantity="other">Preparing %1$d files&#8230;</item>
     </plurals>
     <plurals name="share_success">
         <item quantity="one">%1$d file ready for VR Mobile.</item>

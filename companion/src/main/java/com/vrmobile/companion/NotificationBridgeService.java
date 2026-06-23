@@ -17,6 +17,28 @@ public final class NotificationBridgeService extends NotificationListenerService
         CompanionPreferences.saveNotification(
                 this, notification.getPackageName(), title, text,
                 notification.getPostTime());
+        NotificationRepository.put(notification, title, text);
+    }
+
+    @Override
+    public void onNotificationRemoved(StatusBarNotification notification) {
+        NotificationRepository.remove(notification.getKey());
+    }
+
+    @Override
+    public void onListenerConnected() {
+        StatusBarNotification[] notifications = getActiveNotifications();
+        if (notifications == null) {
+            return;
+        }
+        for (StatusBarNotification notification : notifications) {
+            Notification value = notification.getNotification();
+            Bundle extras = value.extras;
+            NotificationRepository.put(
+                    notification,
+                    limitedText(extras.getCharSequence(Notification.EXTRA_TITLE)),
+                    limitedText(extras.getCharSequence(Notification.EXTRA_TEXT)));
+        }
     }
 
     private static String limitedText(CharSequence value) {

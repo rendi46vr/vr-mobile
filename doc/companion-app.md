@@ -14,9 +14,11 @@ Target utamanya adalah transfer file Android ke PC, notification bridge,
 pairing desktop, dan integrasi Android content URI.
 
 
-## Status v1
+## Status v2
 
 Package: `com.vrmobile.companion`
+
+Version: `0.2.0`
 
 Minimum Android: Android 10 (API 29)
 
@@ -28,28 +30,39 @@ Fitur yang sudah dibuat:
  - Sanitasi nama file agar aman untuk Android dan Windows.
  - Outbox di `/sdcard/Download/VR Mobile Companion/Outbox`.
  - Tombol untuk membuka pengaturan Notification Access.
- - `NotificationListenerService` yang menyimpan event terakhir secara lokal.
+ - `NotificationListenerService` yang menyimpan event aktif beserta action.
+ - Desktop bridge opt-in melalui ADB shell tanpa permission Internet.
+ - Snapshot Outbox dan notifikasi untuk launcher Windows.
+ - Panel Companion Windows dengan refresh otomatis setiap tiga detik.
+ - Windows tray notification untuk event Android baru.
+ - Open notification dan quick reply jika action Android mendukung
+   `RemoteInput`.
+ - Pilih file Outbox dari panel Windows tanpa mengetik path Android.
  - Unit test sanitasi nama file.
  - Tidak meminta permission Internet.
 
-Yang belum dibuat pada v1:
+Yang belum dibuat:
 
- - Pairing companion dengan desktop.
- - Pengiriman event notifikasi ke Windows.
- - Daftar outbox otomatis pada launcher.
  - Native drag dari item Android langsung ke Windows Explorer.
- - Quick reply notifikasi.
+ - File browser khusus di companion untuk memilih file tanpa Android Share.
+ - Filter allowlist/denylist notifikasi.
+ - Riwayat notifikasi persisten setelah notifikasi Android ditutup.
 
 
-## Alur Transfer File v1
+## Alur Transfer File v2
 
 1. Di File Manager Android, tekan lama file.
 2. Pilih `Share`.
 3. Pilih `VR Mobile Companion`.
 4. Companion menyalin stream dari content URI ke:
    `/sdcard/Download/VR Mobile Companion/Outbox`.
-5. Pada launcher desktop, masukkan path outbox lengkap lalu klik `Receive`.
-6. Launcher menjalankan `adb pull` dan menampilkan dialog Save As.
+5. Pada launcher desktop, pilih device lalu buka `Companion`.
+6. Pilih file pada daftar Outbox dan klik `Receive selected`.
+7. Launcher menjalankan `adb pull` dan menampilkan dialog Save As.
+
+User tidak perlu memindahkan file secara manual ke folder Outbox. Aksi
+`Share > VR Mobile Companion` memberi temporary content URI, lalu companion
+yang membuat salinan stabil di Outbox.
 
 Alur ini sengaja memakai Android Share. Window mirror hanya mengetahui piksel
 dan koordinat sentuhan, sehingga tidak dapat mengetahui content URI item yang
@@ -83,14 +96,40 @@ disanitasi sebelum disimpan.
 ### NotificationBridgeService
 
 Service hanya aktif setelah user memberi Notification Access dari Settings.
-V1 menyimpan package, title, text, dan timestamp terakhir di private
-SharedPreferences. Belum ada data yang dikirim ke PC atau jaringan.
+Service menyimpan metadata notifikasi aktif dan action yang masih valid di
+memori proses. Launcher dapat membacanya hanya jika switch Desktop bridge
+diaktifkan.
+
+Quick reply hanya ditampilkan untuk action yang menyediakan free-form
+`RemoteInput`. Balasan dikirim melalui `PendingIntent` milik aplikasi sumber,
+sehingga kompatibilitas tetap ditentukan oleh aplikasi seperti WhatsApp atau
+Telegram.
 
 
-## Protokol Desktop yang Perlu Dikembangkan
+## Protokol Desktop v2
 
-Fase berikutnya harus menggunakan transport lokal yang dibatasi ADB, bukan
-listener Wi-Fi terbuka:
+V2 memakai exported `ContentProvider` yang dilindungi permission sistem
+`android.permission.DUMP` dan pemeriksaan UID shell. Launcher menjalankan:
+
+```text
+adb -s SERIAL shell content call \
+  --uri content://com.vrmobile.companion.bridge \
+  --method snapshot
+```
+
+Payload JSON dikodekan dengan Base64 URL-safe agar aman melewati output shell.
+Bridge tidak membuka socket Wi-Fi dan APK tidak memiliki permission Internet.
+
+Metode yang tersedia:
+
+ - `snapshot`: daftar Outbox dan notifikasi aktif.
+ - `notification_open`: jalankan content intent notifikasi.
+ - `notification_reply`: kirim teks melalui action `RemoteInput`.
+
+ADB authorization berfungsi sebagai trust boundary v2. Pairing token terpisah
+baru diperlukan jika kelak transport tidak lagi dibatasi oleh ADB shell.
+
+Rancangan socket untuk fase lanjutan:
 
 1. Companion membuka local socket Android dengan nama khusus VR Mobile.
 2. Desktop memakai `adb forward tcp:PORT localabstract:SOCKET_NAME`.
@@ -110,9 +149,25 @@ Message awal yang dibutuhkan:
  - `notification_action`: buka app atau quick reply jika action mendukung.
 
 
-## Native Drag Android ke Windows
+## Batas Native Drag Android ke Windows
 
-Native drag keluar dari window mirror memerlukan beberapa tahap:
+Drag langsung dari File Manager Xiaomi atau aplikasi Android lain tidak dapat
+diimplementasikan hanya dari scrcpy. Window mirror menerima piksel dan
+koordinat input, bukan content URI, nama file, atau status item yang dipilih.
+
+Alur stabil saat ini:
+
+1. Pilih file pada File Manager Android.
+2. Gunakan `Share > VR Mobile Companion`.
+3. Buka panel Companion Windows.
+4. Pilih file Outbox dan klik `Receive selected` atau klik dua kali.
+
+Native drag dari panel Outbox Windows ke Explorer masih memerlukan cache lokal
+dan implementasi Windows `IDataObject`/`IDropSource`. Drag yang benar-benar
+berawal dari layar mirror memerlukan file browser milik companion agar kedua
+sisi memiliki stable file ID yang sama.
+
+Tahap implementasinya:
 
 1. Companion menerima content URI melalui Share atau drop target overlay.
 2. Companion menambahkan item ke outbox dan mengirim metadata ke desktop.
@@ -127,13 +182,17 @@ Implementasi overlay Android harus opt-in. Permission Accessibility atau
 jelas. Alur Share tetap menjadi fallback yang lebih aman.
 
 
-## Notification Bridge Roadmap
+## Notification Bridge
 
 ### Fase 1: local capture
 
-Sudah tersedia. Event terakhir disimpan lokal setelah user memberi izin.
+Sudah tersedia. Notifikasi aktif diregistrasikan setelah user memberi izin.
 
 ### Fase 2: desktop stream
+
+Sudah tersedia melalui polling ADB tiga detik dan Windows tray notification.
+
+Peningkatan berikutnya:
 
  - Filter package allowlist/denylist.
  - Redaksi konten sensitif dan lock-screen visibility.
@@ -142,18 +201,18 @@ Sudah tersedia. Event terakhir disimpan lokal setelah user memberi izin.
 
 ### Fase 3: actions
 
- - Klik toast membuka app terkait di mirror.
- - Jalankan notification action Android yang masih valid.
- - Quick reply hanya untuk `RemoteInput` yang didukung notification action.
+ - Panel dapat membuka app melalui content intent.
+ - Quick reply tersedia untuk `RemoteInput` yang didukung notification action.
+ - Klik Windows tray notification membuka panel Companion.
 
 
 ## Security dan Privacy
 
- - V1 tidak memiliki permission Internet.
+ - V2 tetap tidak memiliki permission Internet.
  - Notification Access selalu opt-in dari Settings Android.
  - Tidak ada broad storage permission; file hanya dibaca dari URI yang
    dibagikan user.
- - Desktop transport harus melalui ADB forwarding dan pairing token.
+ - Desktop transport v2 hanya menerima caller ADB shell yang terotorisasi.
  - Payload, nama file, ukuran, jumlah queue, dan panjang teks harus dibatasi.
  - Isi notifikasi tidak boleh ditulis ke log produksi.
  - Quick reply harus menampilkan tujuan dan meminta konfirmasi user.
@@ -197,13 +256,18 @@ Checklist manual:
  - File muncul di `Download/VR Mobile Companion/Outbox`.
  - Share beberapa file dan pastikan semua tersalin.
  - Beri Notification Access dan pastikan status app berubah menjadi granted.
- - Tarik file outbox dengan tombol `Receive` pada launcher desktop.
+ - Aktifkan `Desktop bridge` di companion.
+ - Refresh device pada launcher dan klik `Companion`.
+ - Pastikan daftar Outbox dan notifikasi muncul.
+ - Pilih file lalu klik `Receive selected`.
+ - Pilih notifikasi bertanda `[Reply]`, isi teks, lalu klik `Send reply`.
 
 
-## Definition of Done Companion v2
+## Definition of Done Companion v3
 
  - Pairing desktop/device harus user-approved dan tersimpan aman.
- - Launcher dapat menampilkan outbox tanpa user mengetik path.
+ - Native drag dari daftar Outbox Windows ke Explorer.
+ - File browser companion dengan stable file selection.
  - Pull file menggunakan stable ID, bukan nama file mentah.
  - Notification filter dan Windows toast berfungsi.
  - Reconnect tidak menggandakan event atau transfer.

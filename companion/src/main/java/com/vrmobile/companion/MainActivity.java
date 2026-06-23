@@ -18,6 +18,8 @@ import java.util.Date;
 
 public final class MainActivity extends Activity {
     private TextView notificationStatus;
+    private TextView desktopStatus;
+    private Button bridgeButton;
     private TextView latestShare;
     private TextView latestNotification;
 
@@ -49,17 +51,19 @@ public final class MainActivity extends Activity {
         content.addView(title);
 
         TextView subtitle = text(
-                "Share files to the desktop bridge and grant optional notification access.",
+                "Share files to Windows and connect optional Android notifications.",
                 15, R.color.vr_muted);
         subtitle.setPadding(0, dp(6), 0, dp(24));
         content.addView(subtitle);
 
         content.addView(sectionTitle("Desktop link"));
-        TextView desktopStatus = text(
-                "Pairing protocol: pending. This build has no Internet permission.",
-                15, R.color.vr_muted);
+        desktopStatus = text("Checking desktop bridge...", 15, R.color.vr_muted);
         desktopStatus.setPadding(0, dp(4), 0, dp(20));
         content.addView(desktopStatus);
+
+        bridgeButton = button("Enable desktop bridge");
+        bridgeButton.setOnClickListener(view -> toggleDesktopBridge());
+        content.addView(bridgeButton);
 
         content.addView(sectionTitle("Shared file outbox"));
         TextView outboxPath = text("Shared storage/"
@@ -129,18 +133,31 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
+        boolean bridgeEnabled = CompanionPreferences.isBridgeEnabled(this);
+        desktopStatus.setText(bridgeEnabled
+                ? "Desktop bridge enabled for authorized ADB computers."
+                : "Desktop bridge disabled. No data is available to Windows.");
+        bridgeButton.setText(bridgeEnabled
+                ? "Disable desktop bridge" : "Enable desktop bridge");
+
         NotificationManager manager = getSystemService(NotificationManager.class);
         ComponentName component = new ComponentName(this,
                 NotificationBridgeService.class);
         boolean granted = manager != null
                 && manager.isNotificationListenerAccessGranted(component);
         notificationStatus.setText(granted
-                ? "Notification access granted. Events remain local in v1."
+                ? "Notification access granted. Windows access follows the Desktop bridge switch."
                 : "Notification access not granted.");
 
         CompanionPreferences.Snapshot snapshot = CompanionPreferences.read(this);
         latestShare.setText(formatSharedFile(snapshot));
         latestNotification.setText(formatNotification(snapshot));
+    }
+
+    private void toggleDesktopBridge() {
+        boolean enabled = !CompanionPreferences.isBridgeEnabled(this);
+        CompanionPreferences.setBridgeEnabled(this, enabled);
+        refreshStatus();
     }
 
     private String formatSharedFile(CompanionPreferences.Snapshot snapshot) {

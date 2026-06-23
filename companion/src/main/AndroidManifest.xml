@@ -48,6 +48,12 @@
             </intent-filter>
         </service>
 
+        <provider
+            android:name=".CompanionBridgeProvider"
+            android:authorities="com.vrmobile.companion.bridge"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
     </application>
 
 </manifest>

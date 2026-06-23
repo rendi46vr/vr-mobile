@@ -8,6 +8,7 @@ public final class CompanionPreferences {
             "Download/VR Mobile Companion/Outbox";
 
     private static final String PREFS_NAME = "vr_mobile_companion";
+    private static final String KEY_BRIDGE_ENABLED = "bridge_enabled";
     private static final String KEY_LAST_SHARED_FILE = "last_shared_file";
     private static final String KEY_LAST_SHARED_AT = "last_shared_at";
     private static final String KEY_LAST_NOTIFICATION_PACKAGE = "last_notification_package";
@@ -34,6 +35,14 @@ public final class CompanionPreferences {
                 .putString(KEY_LAST_NOTIFICATION_TEXT, text)
                 .putLong(KEY_LAST_NOTIFICATION_AT, timestamp)
                 .apply();
+    }
+
+    public static boolean isBridgeEnabled(Context context) {
+        return preferences(context).getBoolean(KEY_BRIDGE_ENABLED, false);
+    }
+
+    public static void setBridgeEnabled(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean(KEY_BRIDGE_ENABLED, enabled).apply();
     }
 
     public static Snapshot read(Context context) {

@@ -222,8 +222,10 @@ memakai `--serial=<serial> --send-file=<path>`; jika tidak, launcher memakai
  - `--list-phone-files=<path>`
  - `--pull-file=<remote-path> --pull-target=<local-path>` **implemented**
 
-Drag langsung dari UI File Manager Android ke Explorer tetap memerlukan
-companion APK untuk menangkap dan meneruskan content URI Android.
+Companion v2 menerima content URI melalui Android Share, menyimpan file ke
+Outbox, dan menampilkannya pada panel launcher. Drag langsung dari File Manager
+Android bawaan tetap tidak tersedia karena window scrcpy tidak menerima URI
+item yang dipilih.
 
 
 ## 6. Clipboard Sync Plus UI
@@ -257,18 +259,20 @@ berjalan, atau command utility baru yang menjalankan server control minimal.
 **Catatan penting:** fitur ini tidak bisa selesai hanya dari scrcpy core. Perlu
 APK Android pendamping.
 
-**Android companion APK v1:**
+**Android companion APK v2:**
 
  - `NotificationListenerService`.
  - Permission request screen.
- - Filter app.
- - Kirim event notifikasi ke desktop.
+ - Antrean notifikasi aktif dan deteksi action `RemoteInput`.
+ - Bridge opt-in yang hanya menerima caller ADB shell.
+ - Kirim snapshot notifikasi dan Outbox ke desktop.
 
 **Desktop v1:**
 
- - Local listener dari companion APK.
- - Tampilkan Windows toast.
- - Klik toast membuka dashboard/mirror.
+ - Panel Companion dengan polling setiap tiga detik.
+ - Tampilkan Windows tray notification.
+ - Klik tray notification membuka panel Companion.
+ - Open notification action dan quick reply.
 
 **Fondasi core saat ini:**
 
@@ -325,9 +329,10 @@ APK Android pendamping.
    **Status:** implemented in launcher v3 for drag & drop send queue.
 8. Buat clipboard history UI.
 9. Buat Android companion APK.
-   **Status:** v1 scaffold implemented untuk Share outbox, Notification Access,
-   dan local notification capture.
+   **Status:** v2 implemented untuk Share outbox, Notification Access, ADB shell
+   bridge, active notification actions, dan quick reply.
 10. Buat notification bridge desktop.
+   **Status:** v1 implemented pada panel Companion launcher dan system tray.
 11. Buat installer Windows.
 
 
@@ -341,11 +346,9 @@ Belum selesai di desktop layer:
 
 Belum selesai karena butuh komponen tambahan:
 
- - Notification Bridge desktop membutuhkan pairing protocol untuk companion APK
-   yang sekarang sudah memiliki `NotificationListenerService` lokal.
- - Quick reply notification membutuhkan riset permission dan kompatibilitas
-   aplikasi.
- - File browser HP membutuhkan command tambahan untuk list/pull remote file.
+ - Filter notifikasi per aplikasi dan redaksi konten lock screen.
+ - Native drag Outbox Windows ke Explorer membutuhkan cache lokal dan OLE drag.
+ - File browser companion diperlukan untuk pemilihan file tanpa Android Share.
 
 
 ## Definition of Done

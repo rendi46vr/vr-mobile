@@ -49,6 +49,16 @@ Fitur v3:
  - File non-APK yang di-drop ke panel launcher atau window mirror akan masuk ke
    `/sdcard/Download/VR Phone Mirror/`. File `.apk` akan dicoba install.
 
+Fitur v4:
+
+ - Tombol dan tray menu `Companion bridge`.
+ - Daftar file dari `/sdcard/Download/VR Mobile Companion/Outbox`.
+ - `Receive selected` untuk menarik file tanpa mengetik path Android.
+ - Daftar notifikasi aktif dengan penanda `[Reply]` jika quick reply tersedia.
+ - Open notification action dan quick reply melalui authorized ADB shell.
+ - Polling tiga detik dan Windows tray notification untuk event Android baru.
+ - Bridge process terpisah dari mirror dan utility command.
+
 
 ## Cara build
 
@@ -115,11 +125,18 @@ Smoke test manual:
  - Untuk menerima file, masukkan path lengkap Android pada kolom File Transfer,
    misalnya `/sdcard/Download/VR Phone Mirror/screenshot.png`, klik `Receive`,
    lalu pilih lokasi penyimpanan PC pada dialog Save As.
+ - Install companion APK, beri Notification Access, lalu aktifkan
+   `Desktop bridge` pada app Android.
+ - Klik `Refresh Devices`, pilih device, lalu klik `Companion`.
+ - Pastikan file Outbox dan notifikasi aktif tampil pada panel terpisah.
+ - Pilih file lalu klik `Receive selected`.
+ - Pilih notifikasi bertanda `[Reply]`, masukkan teks, lalu klik `Send reply`.
  - Klik `Disconnect` dan pastikan proses mirror berhenti.
 
 
 ## Catatan implementasi
 
-Launcher saat ini sengaja belum memiliki installer, clipboard UI, quick actions
-UI, atau notification bridge. Fitur-fitur itu akan ditambahkan bertahap setelah
-dashboard, tray, profile manager, dan file transfer stabil.
+Launcher saat ini belum memiliki installer, clipboard UI, quick actions UI,
+filter notifikasi, atau native drag Outbox ke Explorer. Drag yang dimulai dari
+File Manager Android bawaan tidak menyediakan content URI ke scrcpy; gunakan
+`Share > VR Mobile Companion` sebagai jalur transfer Android ke Windows.
