@@ -571,6 +571,10 @@ sc_screen_init(struct sc_screen *screen,
         goto error_destroy_fps_counter;
     }
 
+    if (params->fp) {
+        sc_sdl_enable_file_drop(screen->window);
+    }
+
     screen->renderer = SDL_CreateRenderer(screen->window, NULL);
     if (!screen->renderer) {
         LOGE("Could not create renderer: %s", SDL_GetError());

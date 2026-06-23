@@ -120,16 +120,19 @@ This only works for the default mouse mode (`--mouse=sdk`).
 
 ### Install APK
 
-To install an APK, drag & drop an APK file (ending with `.apk`) to the _scrcpy_
-window.
+To install an APK, drag it directly from Windows Explorer (or another desktop
+file manager) and drop it on the _scrcpy_ mirror window. APK files ending with
+`.apk` are installed automatically.
 
 There is no visual feedback, a log is printed to the console.
 
 
 ### Push file to device
 
-To push a file to `/sdcard/Download/VR Phone Mirror/` on the device, drag &
-drop a (non-APK) file to the _scrcpy_ window.
+To push a file to `/sdcard/Download/VR Phone Mirror/` on the device, drag it
+directly from Windows Explorer (or another desktop file manager) and drop it on
+the _scrcpy_ mirror window. This path is the phone's shared internal storage,
+shown by Android file managers under `Download/VR Phone Mirror`.
 
 There is no visual feedback, a log is printed to the console.
 
@@ -138,3 +141,7 @@ The target directory can be changed on start:
 ```bash
 scrcpy --push-target=/sdcard/Movies/
 ```
+
+File drop requires control to be enabled, so it is unavailable with
+`--no-control`. On Windows, VR Mobile also enables Explorer drops when the
+mirror process is running with elevated permissions.

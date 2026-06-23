@@ -3,7 +3,76 @@
 #include <assert.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+# include <windows.h>
+#endif
+
 #include "util/log.h"
+
+#ifdef _WIN32
+typedef void (WINAPI *sc_drag_accept_files_fn)(HWND, BOOL);
+typedef BOOL (WINAPI *sc_change_window_message_filter_ex_fn)(
+    HWND, UINT, DWORD, void *);
+
+# ifndef MSGFLT_ALLOW
+#  define MSGFLT_ALLOW 1
+# endif
+
+# ifndef WM_COPYGLOBALDATA
+#  define WM_COPYGLOBALDATA 0x0049
+# endif
+
+static void
+sc_sdl_enable_windows_file_drop(SDL_Window *window) {
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    if (!props) {
+        LOGW("Could not get window properties for file drop: %s",
+             SDL_GetError());
+        return;
+    }
+
+    HWND hwnd = SDL_GetPointerProperty(
+        props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (!hwnd) {
+        LOGW("Could not get the Win32 window handle for file drop");
+        return;
+    }
+
+    HMODULE shell32 = LoadLibraryW(L"shell32.dll");
+    if (shell32) {
+        union {
+            FARPROC proc;
+            sc_drag_accept_files_fn fn;
+        } drag_accept = {
+            .proc = GetProcAddress(shell32, "DragAcceptFiles"),
+        };
+        if (drag_accept.fn) {
+            drag_accept.fn(hwnd, TRUE);
+        }
+        FreeLibrary(shell32);
+    }
+
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) {
+        return;
+    }
+
+    union {
+        FARPROC proc;
+        sc_change_window_message_filter_ex_fn fn;
+    } change_filter = {
+        .proc = GetProcAddress(user32, "ChangeWindowMessageFilterEx"),
+    };
+    if (!change_filter.fn) {
+        return;
+    }
+
+    change_filter.fn(hwnd, WM_DROPFILES, MSGFLT_ALLOW, NULL);
+    change_filter.fn(hwnd, WM_COPYDATA, MSGFLT_ALLOW, NULL);
+    change_filter.fn(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, NULL);
+    LOGD("Windows Explorer file drop enabled for the mirror window");
+}
+#endif
 
 SDL_Window *
 sc_sdl_create_window(const char *title, int64_t x, int64_t y, int64_t width,
@@ -35,6 +104,16 @@ sc_sdl_create_window(const char *title, int64_t x, int64_t y, int64_t width,
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     return window;
+}
+
+void
+sc_sdl_enable_file_drop(SDL_Window *window) {
+    assert(window);
+
+    SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
+#ifdef _WIN32
+    sc_sdl_enable_windows_file_drop(window);
+#endif
 }
 
 struct sc_size

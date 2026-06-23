@@ -1149,6 +1149,7 @@ sc_input_manager_process_file(struct sc_input_manager *im,
     } else {
         action = SC_FILE_PUSHER_ACTION_PUSH_FILE;
     }
+    LOGI("File dropped on mirror window: %s", file);
     bool ok = sc_file_pusher_request(im->fp, action, file);
     if (!ok) {
         free(file);

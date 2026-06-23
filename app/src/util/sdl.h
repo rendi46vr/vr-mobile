@@ -13,6 +13,11 @@ SDL_Window *
 sc_sdl_create_window(const char *title, int64_t x, int64_t y, int64_t width,
                      int64_t height, int64_t flags);
 
+// Enable file drops from the desktop on this window. On Windows, this also
+// allows drops from Explorer when the scrcpy process runs elevated.
+void
+sc_sdl_enable_file_drop(SDL_Window *window);
+
 struct sc_size
 sc_sdl_get_window_size(SDL_Window *window);
 
