@@ -179,6 +179,7 @@ documented in the following pages:
  - [VR Mobile upgrade roadmap](doc/upgrade-roadmap.md)
  - [VR Mobile desktop upgrade plan](doc/desktop-upgrade-plan.md)
  - [VR Mobile desktop launcher](doc/desktop-launcher.md)
+ - [VR Mobile companion app](doc/companion-app.md)
  - [Verify release signatures](doc/verify-release.md)
 
 [wiki]: https://github.com/Genymobile/scrcpy/wiki

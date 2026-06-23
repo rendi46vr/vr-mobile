@@ -1,0 +1,30 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = 'com.vrmobile.companion'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'com.vrmobile.companion'
+        minSdkVersion 29
+        targetSdkVersion 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    lint {
+        abortOnError true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+apply from: "$project.rootDir/config/android-checkstyle.gradle"

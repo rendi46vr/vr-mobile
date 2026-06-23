@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="vr_primary">#0F766E</color>
+    <color name="vr_primary_dark">#115E59</color>
+    <color name="vr_surface">#F8FAFC</color>
+    <color name="vr_text">#172033</color>
+    <color name="vr_muted">#526078</color>
+</resources>

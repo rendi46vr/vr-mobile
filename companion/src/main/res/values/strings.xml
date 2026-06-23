@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_reading">Reading shared files...</string>
+    <plurals name="share_preparing">
+        <item quantity="one">Preparing %1$d file...</item>
+        <item quantity="other">Preparing %1$d files...</item>
+    </plurals>
+    <plurals name="share_success">
+        <item quantity="one">%1$d file ready for VR Mobile.</item>
+        <item quantity="other">%1$d files ready for VR Mobile.</item>
+    </plurals>
+    <plurals name="share_partial">
+        <item quantity="one">Copied %1$d file. %2$s</item>
+        <item quantity="other">Copied %1$d files. %2$s</item>
+    </plurals>
+</resources>

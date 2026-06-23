@@ -325,6 +325,8 @@ APK Android pendamping.
    **Status:** implemented in launcher v3 for drag & drop send queue.
 8. Buat clipboard history UI.
 9. Buat Android companion APK.
+   **Status:** v1 scaffold implemented untuk Share outbox, Notification Access,
+   dan local notification capture.
 10. Buat notification bridge desktop.
 11. Buat installer Windows.
 
@@ -339,8 +341,8 @@ Belum selesai di desktop layer:
 
 Belum selesai karena butuh komponen tambahan:
 
- - Notification Bridge membutuhkan companion APK Android dengan
-   `NotificationListenerService`.
+ - Notification Bridge desktop membutuhkan pairing protocol untuk companion APK
+   yang sekarang sudah memiliki `NotificationListenerService` lokal.
  - Quick reply notification membutuhkan riset permission dan kompatibilitas
    aplikasi.
  - File browser HP membutuhkan command tambahan untuk list/pull remote file.

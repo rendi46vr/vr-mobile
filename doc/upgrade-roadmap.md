@@ -250,7 +250,9 @@ phone` masih perlu UI state, tetapi fondasi data history sudah ada.
 
 ## 9. Notification Bridge
 
-**Status:** pending companion APK phase.
+**Status:** companion APK v1 started. Share receiver, local outbox, permission
+screen, dan local notification capture sudah tersedia. Desktop transport masih
+pending pairing protocol.
 
 **Masalah user:** user ingin melihat notifikasi HP di Windows tanpa selalu
 membuka layar mirror.
@@ -265,11 +267,11 @@ membuka layar mirror.
 **Integrasi scrcpy/ADB:** fitur ini tidak cukup hanya dengan scrcpy core. Perlu
 APK pendamping Android yang punya akses Notification Listener.
 
-**Catatan implementasi awal:** belum dibuat di core pass ini karena membutuhkan
-APK pendamping dengan akses Notification Listener dan protokol komunikasi baru.
-Core scrcpy sekarang punya quick action `notification-panel`, `settings-panel`,
-dan `collapse-panels`, tetapi bridge notifikasi Windows yang benar harus datang
-dari APK pendamping.
+**Catatan implementasi awal:** modul `companion` sekarang menyediakan
+`NotificationListenerService` opt-in dan menyimpan event terakhir secara lokal.
+Core scrcpy tetap menyediakan quick action `notification-panel`,
+`settings-panel`, dan `collapse-panels`. Pengiriman ke Windows belum diaktifkan
+sebelum ADB-forwarded pairing protocol dan filter privasi selesai.
 
 
 ## 10. Battery & Device Status Panel
