@@ -341,6 +341,20 @@ sc_adb_push(struct sc_intr *intr, const char *serial, const char *local,
 }
 
 bool
+sc_adb_pull(struct sc_intr *intr, const char *serial, const char *remote,
+            const char *local, unsigned flags) {
+    assert(serial);
+    assert(remote);
+    assert(local);
+    const char *const argv[] =
+        SC_ADB_COMMAND("-s", serial, "pull", remote, local);
+
+    sc_pid pid = sc_adb_execute(argv, flags);
+
+    return process_check_success_intr(intr, pid, "adb pull", flags);
+}
+
+bool
 sc_adb_install(struct sc_intr *intr, const char *serial, const char *local,
                unsigned flags) {
     assert(serial);

@@ -82,6 +82,13 @@ test_dynamic_commands(void) {
     assert(vr_launcher_command_arg_count(
                VR_LAUNCHER_COMMAND_SEND_FILE) == 0);
     assert(!vr_launcher_command_args(VR_LAUNCHER_COMMAND_SEND_FILE));
+
+    assert(!strcmp("Receive file",
+                   vr_launcher_command_label(
+                       VR_LAUNCHER_COMMAND_PULL_FILE)));
+    assert(vr_launcher_command_arg_count(
+               VR_LAUNCHER_COMMAND_PULL_FILE) == 0);
+    assert(!vr_launcher_command_args(VR_LAUNCHER_COMMAND_PULL_FILE));
 }
 
 int

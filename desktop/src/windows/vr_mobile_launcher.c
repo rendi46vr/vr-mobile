@@ -2,6 +2,7 @@
 #define _UNICODE
 
 #include <windows.h>
+#include <commdlg.h>
 #include <shellapi.h>
 
 #include <stdbool.h>
@@ -27,6 +28,7 @@
 #define ID_BUTTON_PROFILE_DELETE 1011
 #define ID_BUTTON_EXIT 1012
 #define ID_BUTTON_TAILSCALE 1013
+#define ID_BUTTON_PULL_FILE 1014
 #define ID_LOG 1101
 #define ID_STATUS 1102
 #define ID_DEVICE_LIST 1103
@@ -36,6 +38,7 @@
 #define ID_PROFILE_ARGS 1107
 #define ID_FILE_DROP 1108
 #define ID_TAILSCALE_ADDR 1109
+#define ID_PULL_REMOTE_PATH 1110
 
 #define ID_TRAY_OPEN 2001
 #define ID_TRAY_CONNECT 2002
@@ -83,6 +86,7 @@ struct command_runner {
     char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
     char profile_name[MAX_PROFILE_NAME_CHARS];
     WCHAR file_path[MAX_FILE_PATH_CHARS];
+    WCHAR remote_path[MAX_FILE_PATH_CHARS];
     WCHAR tailscale_addr[512];
     bool has_serial;
     bool has_profile;
@@ -116,6 +120,7 @@ static HWND profile_name_edit;
 static HWND profile_args_edit;
 static HWND file_drop_heading;
 static HWND file_drop_edit;
+static HWND pull_remote_path_edit;
 static HWND device_list;
 static HWND detail_edit;
 static HWND log_edit;
@@ -1059,6 +1064,26 @@ build_command_line(const struct command_runner *runner,
                                       runner->file_path);
     }
 
+    if (runner->command == VR_LAUNCHER_COMMAND_PULL_FILE) {
+        if (!runner->has_serial) {
+            if (runner->has_tailscale_addr) {
+                if (!append_wide_option_arg(cmdline, len, L"--tailscale=",
+                                            runner->tailscale_addr)) {
+                    return false;
+                }
+            } else if (!append_ascii_arg(cmdline, len,
+                                         "--connect-manager")) {
+                return false;
+            }
+        }
+
+        return runner->has_file
+            && append_wide_option_arg(cmdline, len, L"--pull-file=",
+                                      runner->remote_path)
+            && append_wide_option_arg(cmdline, len, L"--pull-target=",
+                                      runner->file_path);
+    }
+
     return append_launcher_args(cmdline, len, runner->command);
 }
 
@@ -1699,6 +1724,9 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
         case VR_LAUNCHER_COMMAND_SEND_FILE:
             set_status(L"Sending file...");
             break;
+        case VR_LAUNCHER_COMMAND_PULL_FILE:
+            set_status(L"Receiving file...");
+            break;
     }
 
     HANDLE thread = CreateThread(NULL, 0, command_thread, runner, 0, NULL);
@@ -1780,6 +1808,89 @@ start_send_file_now(HWND hwnd, const WCHAR *path) {
     append_log_line(header);
     set_status(L"Sending file...");
     return start_runner(runner);
+}
+
+static const WCHAR *
+remote_basename(const WCHAR *path) {
+    const WCHAR *separator = wcsrchr(path, L'/');
+    const WCHAR *backslash = wcsrchr(path, L'\\');
+    if (backslash && (!separator || backslash > separator)) {
+        separator = backslash;
+    }
+    return separator ? separator + 1 : path;
+}
+
+static bool
+choose_pull_destination(HWND hwnd, const WCHAR *remote, WCHAR *out,
+                        size_t out_len) {
+    const WCHAR *name = remote_basename(remote);
+    if (!*name || wcslen(name) >= out_len) {
+        return false;
+    }
+    wcscpy(out, name);
+
+    OPENFILENAMEW dialog;
+    ZeroMemory(&dialog, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = hwnd;
+    dialog.lpstrFile = out;
+    dialog.nMaxFile = (DWORD) out_len;
+    dialog.lpstrFilter = L"All files\0*.*\0\0";
+    dialog.nFilterIndex = 1;
+    dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT
+                 | OFN_PATHMUSTEXIST;
+    dialog.lpstrTitle = L"Save file from Android";
+    return GetSaveFileNameW(&dialog);
+}
+
+static void
+receive_file_from_phone(HWND hwnd) {
+    struct command_runner *runner;
+    if (!prepare_runner_common(hwnd, VR_LAUNCHER_COMMAND_PULL_FILE, false,
+                               &runner)) {
+        append_log_line(L"Another utility command is still running.");
+        set_status(L"Utility command still running");
+        return;
+    }
+
+    GetWindowTextW(pull_remote_path_edit, runner->remote_path,
+                   (int) (sizeof(runner->remote_path)
+                          / sizeof(runner->remote_path[0])));
+    trim_wide_in_place(runner->remote_path);
+    size_t remote_len = wcslen(runner->remote_path);
+    if (!remote_len || runner->remote_path[remote_len - 1] == L'/') {
+        HeapFree(GetProcessHeap(), 0, runner);
+        append_log_line(L"Enter a complete Android file path first.");
+        set_status(L"Android file path required");
+        return;
+    }
+
+    if (!choose_pull_destination(
+            hwnd, runner->remote_path, runner->file_path,
+            sizeof(runner->file_path) / sizeof(runner->file_path[0]))) {
+        HeapFree(GetProcessHeap(), 0, runner);
+        set_status(L"Receive file cancelled");
+        return;
+    }
+
+    runner->has_file = true;
+    runner->has_serial = get_selected_serial(runner->serial,
+                                             sizeof(runner->serial));
+    if (!runner->has_serial) {
+        GetWindowTextW(tailscale_addr_edit, runner->tailscale_addr,
+                       (int) (sizeof(runner->tailscale_addr)
+                              / sizeof(runner->tailscale_addr[0])));
+        trim_wide_in_place(runner->tailscale_addr);
+        runner->has_tailscale_addr = runner->tailscale_addr[0] != L'\0';
+    }
+
+    WCHAR header[MAX_FILE_PATH_CHARS * 2];
+    swprintf(header, sizeof(header) / sizeof(header[0]),
+             L"> Receive %ls -> %ls", runner->remote_path,
+             runner->file_path);
+    append_log_line(header);
+    set_status(L"Receiving file...");
+    start_runner(runner);
 }
 
 static void
@@ -2032,8 +2143,16 @@ resize_controls(HWND hwnd) {
     int file_y = y + detail_h + gap;
     MoveWindow(detail_edit, middle_x, y, middle_w, detail_h, TRUE);
     MoveWindow(file_drop_heading, middle_x, file_y, middle_w, heading_h, TRUE);
-    MoveWindow(file_drop_edit, middle_x, file_y + heading_h, middle_w,
-               main_h - detail_h - gap - heading_h, TRUE);
+    int transfer_y = file_y + heading_h;
+    int receive_button_w = 90;
+    MoveWindow(pull_remote_path_edit, middle_x, transfer_y,
+               middle_w - receive_button_w - gap, button_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_PULL_FILE),
+               middle_x + middle_w - receive_button_w, transfer_y,
+               receive_button_w, button_h, TRUE);
+    transfer_y += button_h + gap;
+    MoveWindow(file_drop_edit, middle_x, transfer_y, middle_w,
+               y + main_h - transfer_y, TRUE);
 
     int profile_list_h = 105;
     int profile_button_w = (right_w - (3 * gap)) / 4;
@@ -2110,6 +2229,8 @@ apply_fonts(HWND hwnd) {
     set_font(profile_args_edit, mono_font);
     set_font(file_drop_heading, ui_font);
     set_font(file_drop_edit, ui_font);
+    set_font(pull_remote_path_edit, ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_PULL_FILE), ui_font);
 }
 
 static void
@@ -2258,6 +2379,15 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                 0, 0, 0, 0, hwnd, (HMENU) ID_FILE_DROP,
                                 app_instance, NULL);
 
+            pull_remote_path_edit =
+                CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
+                                VR_FILE_DROP_TARGET,
+                                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                0, 0, 0, 0, hwnd,
+                                (HMENU) ID_PULL_REMOTE_PATH, app_instance,
+                                NULL);
+            create_button(hwnd, L"Receive", ID_BUTTON_PULL_FILE);
+
             profile_list =
                 CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL |
@@ -2382,6 +2512,9 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 case ID_BUTTON_PROFILE_DELETE:
                     delete_selected_profile();
                     return 0;
+                case ID_BUTTON_PULL_FILE:
+                    receive_file_from_phone(hwnd);
+                    return 0;
                 case ID_TRAY_OPEN:
                     show_dashboard();
                     return 0;
@@ -2440,6 +2573,13 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                         ok ? L"Transfer completed. Check " VR_FILE_DROP_TARGET
                            : L"Transfer failed. Check the Log panel above.");
                     start_next_queued_file(hwnd);
+                } else if (done->command == VR_LAUNCHER_COMMAND_PULL_FILE) {
+                    bool ok = done->exit_code == 0;
+                    set_status(ok ? L"File received"
+                                  : L"Receive file failed");
+                    append_file_transfer_line(
+                        ok ? L"File received on computer."
+                           : L"Receive failed. Check the Log panel above.");
                 } else if (done->mirror) {
                     set_status(done->exit_code == 0 ? L"Mirror stopped"
                                                      : L"Mirror failed");

@@ -213,13 +213,17 @@ memakai `--serial=<serial> --send-file=<path>`; jika tidak, launcher memakai
 **Fitur lanjutan:**
 
  - File browser HP.
- - Pull file dari HP ke PC.
+ - Pull file dari HP ke PC. **Status:** implemented v1 melalui input path Android
+   dan dialog Save As di launcher.
  - Delete/rename file dari UI.
 
 **Command tambahan yang perlu dibuat nanti:**
 
  - `--list-phone-files=<path>`
- - `--pull-file=<remote-path>`
+ - `--pull-file=<remote-path> --pull-target=<local-path>` **implemented**
+
+Drag langsung dari UI File Manager Android ke Explorer tetap memerlukan
+companion APK untuk menangkap dan meneruskan content URI Android.
 
 
 ## 6. Clipboard Sync Plus UI

@@ -1503,6 +1503,20 @@ sc_server_run_send_file(struct sc_server *server, const char *serial,
 #undef VR_MOBILE_PUSH_TARGET
 }
 
+static bool
+sc_server_run_pull_file(struct sc_server *server, const char *serial,
+                        const char *remote, const char *local) {
+    assert(remote);
+    assert(local);
+
+    LOGI("Receiving file from device: %s", remote);
+    bool ok = sc_adb_pull(&server->intr, serial, remote, local, 0);
+    if (ok) {
+        LOGI("File saved on computer: %s", local);
+    }
+    return ok;
+}
+
 static const char *
 sc_server_quick_action_get_name(enum sc_quick_action action) {
     switch (action) {
@@ -1599,6 +1613,12 @@ sc_server_run_vr_mobile_utilities(struct sc_server *server,
     if (server->params.send_file) {
         ok &= sc_server_run_send_file(server, serial,
                                       server->params.send_file);
+    }
+
+    if (server->params.pull_file) {
+        ok &= sc_server_run_pull_file(server, serial,
+                                      server->params.pull_file,
+                                      server->params.pull_target);
     }
 
     if (server->params.quick_action != SC_QUICK_ACTION_NONE) {
@@ -1730,6 +1750,7 @@ run_server(void *data) {
     if (params->device_status
             || params->xiaomi_helper
             || params->send_file
+            || params->pull_file
             || params->quick_action != SC_QUICK_ACTION_NONE) {
         ok = sc_server_run_vr_mobile_utilities(server, serial);
         if (!ok) {

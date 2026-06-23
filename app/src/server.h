@@ -73,6 +73,8 @@ struct sc_server_params {
     enum sc_quick_action quick_action;
     enum sc_output_format output_format;
     const char *send_file;
+    const char *pull_file;
+    const char *pull_target;
     bool select_usb;
     bool select_tcpip;
     bool cleanup;

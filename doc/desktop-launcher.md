@@ -112,6 +112,9 @@ Smoke test manual:
    `--send-file`.
  - Drop file langsung ke window mirror dan pastikan log menampilkan
    `successfully pushed to /sdcard/Download/VR Phone Mirror/`.
+ - Untuk menerima file, masukkan path lengkap Android pada kolom File Transfer,
+   misalnya `/sdcard/Download/VR Phone Mirror/screenshot.png`, klik `Receive`,
+   lalu pilih lokasi penyimpanan PC pada dialog Save As.
  - Klik `Disconnect` dan pastikan proses mirror berhenti.
 
 

@@ -197,7 +197,8 @@ nanti memanggil flow yang sama.
 
 ## 7. File Transfer Drag & Drop
 
-**Status:** v1 command foundation implemented as `--send-file=<path>`.
+**Status:** v2 implemented for desktop-to-phone drag and reverse transfer via
+`--pull-file=<remote-path> --pull-target=<local-path>`.
 
 **Masalah user:** transfer file lewat command line tidak natural untuk user
 desktop.
@@ -216,7 +217,11 @@ desktop.
 
 **Catatan implementasi awal:** v1 sudah bisa push file ke
 `/sdcard/Download/VR Phone Mirror/` dan install APK dengan `adb install -r`.
-Drag-and-drop UI dan file browser dua arah masih fase lanjutan.
+V2 menambahkan tombol `Receive` di launcher untuk menarik file dari path Android
+ke lokasi pilihan di PC melalui `adb pull`. Drag langsung dari item di File
+Manager Android keluar dari window mirror masih membutuhkan companion APK agar
+URI file yang dipilih dapat dikirim ke desktop; scrcpy core hanya menerima
+video dan koordinat input.
 
 
 ## 8. Clipboard Sync Plus

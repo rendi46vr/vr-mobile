@@ -20,10 +20,10 @@
 #define STR_IMPL_(x) #x
 #define STR(x) STR_IMPL_(x)
 
-#define SC_TAILSCALE_DEFAULT_MAX_SIZE 800
+#define SC_TAILSCALE_DEFAULT_MAX_SIZE 1024
 #define SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE 1000000
 #define SC_TAILSCALE_DEFAULT_MAX_FPS "24"
-#define SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS 20
+#define SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS 50
 
 enum {
     OPT_WINDOW_TITLE = 1000,
@@ -39,6 +39,8 @@ enum {
     OPT_RECORD_FORMAT,
     OPT_PREFER_TEXT,
     OPT_SEND_FILE,
+    OPT_PULL_FILE,
+    OPT_PULL_TARGET,
     OPT_WINDOW_X,
     OPT_WINDOW_Y,
     OPT_WINDOW_WIDTH,
@@ -400,8 +402,10 @@ static const struct sc_option options[] = {
                 "provided, the last saved Tailscale address is reused.\n"
                 "The phone must already have ADB TCP/IP mode enabled.\n"
                 "For smoother VPN usage, VR Mobile applies lightweight "
-                "defaults unless explicitly overridden: max size 800, max "
-                "FPS 24, video bit rate 1M and video buffer 20 ms.",
+                "defaults unless explicitly overridden: max size "
+                STR(SC_TAILSCALE_DEFAULT_MAX_SIZE) ", max FPS "
+                SC_TAILSCALE_DEFAULT_MAX_FPS ", video bit rate 1M and video "
+                "buffer " STR(SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS) " ms.",
     },
     {
         .longopt_id = OPT_CROP,
@@ -950,6 +954,19 @@ static const struct sc_option options[] = {
         .argdesc = "file",
         .text = "Send a file to /sdcard/Download/VR Phone Mirror, or install "
                 "it if it is an APK, then exit.",
+    },
+    {
+        .longopt_id = OPT_PULL_FILE,
+        .longopt = "pull-file",
+        .argdesc = "remote-path",
+        .text = "Copy a file from the Android device, then exit. Requires "
+                "--pull-target.",
+    },
+    {
+        .longopt_id = OPT_PULL_TARGET,
+        .longopt = "pull-target",
+        .argdesc = "local-path",
+        .text = "Set the local destination for --pull-file.",
     },
     {
         .longopt_id = OPT_SCREEN_OFF_TIMEOUT,
@@ -3195,6 +3212,12 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
             case OPT_SEND_FILE:
                 opts->send_file = optarg;
                 break;
+            case OPT_PULL_FILE:
+                opts->pull_file = optarg;
+                break;
+            case OPT_PULL_TARGET:
+                opts->pull_target = optarg;
+                break;
             case OPT_SAVE_PROFILE:
                 // Already handled before normal option parsing.
                 break;
@@ -3259,8 +3282,14 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
     bool device_utility = opts->device_status
                         || opts->xiaomi_helper
                         || opts->quick_action != SC_QUICK_ACTION_NONE
-                        || !!opts->send_file;
+                        || !!opts->send_file
+                        || !!opts->pull_file;
     bool utility_command = opts->connection_health || device_utility;
+
+    if (!!opts->pull_file != !!opts->pull_target) {
+        LOGE("--pull-file and --pull-target must be passed together");
+        return false;
+    }
 
     if (opts->connection_health
             && (opts->connect_manager != SC_CONNECT_MANAGER_DISABLED

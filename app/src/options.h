@@ -275,6 +275,8 @@ struct scrcpy_options {
     const char *camera_ar;
     const char *camera_zoom;
     const char *send_file;
+    const char *pull_file;
+    const char *pull_target;
     uint16_t camera_fps;
     uint16_t auto_reconnect_delay;
     enum sc_log_level log_level;

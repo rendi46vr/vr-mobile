@@ -137,10 +137,10 @@ Because Tailscale/VPN links are often heavier than local Wi-Fi, `--tailscale`
 automatically applies lightweight video defaults unless you explicitly override
 them:
 
- - `--max-size=800`
+ - `--max-size=1024`
  - `--max-fps=24`
  - `--video-bit-rate=1M`
- - `--video-buffer=20`
+ - `--video-buffer=50`
 
 For slower networks, reduce them further:
 

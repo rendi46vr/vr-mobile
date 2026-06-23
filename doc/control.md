@@ -147,3 +147,19 @@ File drop requires control to be enabled, so it is unavailable with
 mirror process is running with elevated permissions. The desktop launcher
 automatically restarts without Administrator privileges so that Explorer and
 the mirror use the same Windows integrity level.
+
+
+### Pull file from device
+
+To copy a known Android file path to the computer without starting a mirror:
+
+```bash
+scrcpy --serial=DEVICE_SERIAL \
+  --pull-file="/sdcard/Download/VR Phone Mirror/screenshot.png" \
+  --pull-target="C:/Users/me/Downloads/screenshot.png"
+```
+
+The Windows launcher exposes this flow through the `Receive` button and a Save
+As dialog. Dragging an item directly out of an Android file manager is not
+available from the scrcpy video stream alone because Android does not send the
+selected file URI over the mirror protocol.

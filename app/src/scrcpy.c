@@ -403,6 +403,8 @@ scrcpy(struct scrcpy_options *options) {
         .quick_action = options->quick_action,
         .output_format = options->output_format,
         .send_file = options->send_file,
+        .pull_file = options->pull_file,
+        .pull_target = options->pull_target,
         .cleanup = options->cleanup,
         .power_on = options->power_on,
         .kill_adb_on_close = options->kill_adb_on_close,
@@ -445,7 +447,8 @@ scrcpy(struct scrcpy_options *options) {
                         || options->device_status
                         || options->xiaomi_helper
                         || options->quick_action != SC_QUICK_ACTION_NONE
-                        || options->send_file;
+                        || options->send_file
+                        || options->pull_file;
 
     if (server_utility) {
         bool ok = await_for_server(NULL);

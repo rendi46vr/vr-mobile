@@ -180,10 +180,10 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, "100.80.12.34"));
-    assert(args.opts.max_size == 800);
+    assert(args.opts.max_size == 1024);
     assert(!strcmp(args.opts.max_fps, "24"));
     assert(args.opts.video_bit_rate == 1000000);
-    assert(args.opts.video_buffer == SC_TICK_FROM_MS(20));
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(50));
 
     args.opts = scrcpy_options_default;
     char *argv_last[] = {"scrcpy", "--tailscale"};
@@ -192,10 +192,10 @@ static void test_tailscale_options(void) {
     assert(ok);
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, ""));
-    assert(args.opts.max_size == 800);
+    assert(args.opts.max_size == 1024);
     assert(!strcmp(args.opts.max_fps, "24"));
     assert(args.opts.video_bit_rate == 1000000);
-    assert(args.opts.video_buffer == SC_TICK_FROM_MS(20));
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(50));
 
     args.opts = scrcpy_options_default;
     char *argv_override[] = {
@@ -347,6 +347,29 @@ static void test_vr_mobile_utility_options(void) {
     ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_send_file), argv_send_file);
     assert(ok);
     assert(!strcmp(args.opts.send_file, "demo.txt"));
+
+    args.opts = scrcpy_options_default;
+    char *argv_pull_file[] = {
+        "scrcpy",
+        "--pull-file=/sdcard/Download/demo.txt",
+        "--pull-target=C:/Users/demo/Downloads/demo.txt",
+    };
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_pull_file), argv_pull_file);
+    assert(ok);
+    assert(!strcmp(args.opts.pull_file, "/sdcard/Download/demo.txt"));
+    assert(!strcmp(args.opts.pull_target,
+                   "C:/Users/demo/Downloads/demo.txt"));
+
+    args.opts = scrcpy_options_default;
+    char *argv_pull_missing_target[] = {
+        "scrcpy",
+        "--pull-file=/sdcard/Download/demo.txt",
+    };
+
+    ok = scrcpy_parse_args(&args, ARRAY_LEN(argv_pull_missing_target),
+                           argv_pull_missing_target);
+    assert(!ok);
 
     args.opts = scrcpy_options_default;
     char *argv_health[] = {"scrcpy", "--connection-health"};
