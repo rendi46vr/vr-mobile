@@ -1,6 +1,7 @@
 package com.genymobile.scrcpy.util;
 
 import com.genymobile.scrcpy.AndroidVersions;
+import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.audio.AudioCodec;
 import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.display.DisplayInfo;
@@ -14,6 +15,9 @@ import com.genymobile.scrcpy.wrappers.ServiceManager;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.graphics.Rect;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -23,6 +27,9 @@ import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.os.Build;
 import android.util.Range;
+import android.util.Base64;
+
+import java.io.ByteArrayOutputStream;
 
 import java.text.DecimalFormat;
 import java.util.Collections;
@@ -248,6 +255,32 @@ public final class LogUtils {
     public static String buildAppListMessage() {
         List<DeviceApp> apps = Device.listApps();
         return buildAppListMessage("List of apps:", apps);
+    }
+
+    public static String buildAppIconListMessage() {
+        StringBuilder builder = new StringBuilder("List of app icons:");
+        android.content.pm.PackageManager pm = FakeContext.get().getPackageManager();
+        List<DeviceApp> apps = Device.listApps();
+        for (DeviceApp app : apps) {
+            try {
+                Drawable drawable = pm.getApplicationIcon(app.getPackageName());
+                final int size = 96;
+                Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+                drawable.setBounds(0, 0, size, size);
+                drawable.draw(canvas);
+                ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
+                bitmap.recycle();
+                String encoded = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP);
+                builder.append("\n @ICON\t").append(app.getPackageName())
+                       .append('\t').append(encoded);
+            } catch (Throwable e) {
+                // A broken third-party icon must not abort caching all other apps.
+                builder.append("\n @ICON_ERROR\t").append(app.getPackageName());
+            }
+        }
+        return builder.toString();
     }
 
     @SuppressLint("QueryPermissionsNeeded")

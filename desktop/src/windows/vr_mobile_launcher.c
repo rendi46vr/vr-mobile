@@ -14,6 +14,10 @@
 
 #include "launcher_commands.h"
 #include "launcher_json.h"
+#include "vr_app_search.h"
+#include "vr_file_manager.h"
+#include "vr_internet_connect.h"
+#include "vr_theme.h"
 
 #define ID_BUTTON_CONNECT 1001
 #define ID_BUTTON_WIRELESS 1002
@@ -30,6 +34,8 @@
 #define ID_BUTTON_TAILSCALE 1013
 #define ID_BUTTON_PULL_FILE 1014
 #define ID_BUTTON_COMPANION 1015
+#define ID_BUTTON_FILE_MANAGER 1016
+#define ID_BUTTON_INTERNET 1017
 #define ID_LOG 1101
 #define ID_STATUS 1102
 #define ID_DEVICE_LIST 1103
@@ -40,6 +46,8 @@
 #define ID_FILE_DROP 1108
 #define ID_TAILSCALE_ADDR 1109
 #define ID_PULL_REMOTE_PATH 1110
+#define ID_DEVICES_EMPTY 1111
+#define ID_ACTIVITY_EMPTY 1112
 
 #define ID_COMPANION_REFRESH 3001
 #define ID_COMPANION_RECEIVE 3002
@@ -63,6 +71,7 @@
 #define ID_TRAY_EXIT 2008
 #define ID_TRAY_TAILSCALE 2009
 #define ID_TRAY_COMPANION 2010
+#define ID_TRAY_INTERNET 2011
 
 #define WM_VR_LOG (WM_APP + 1)
 #define WM_VR_DONE (WM_APP + 2)
@@ -70,6 +79,7 @@
 #define WM_VR_COMPANION_DONE (WM_APP + 4)
 
 #define ID_TIMER_COMPANION 4001
+#define ID_TIMER_REMOTE_FOCUS 4002
 
 #define VR_STATUS_DLL_NOT_FOUND 0xC0000135UL
 
@@ -105,10 +115,12 @@ struct command_runner {
     WCHAR file_path[MAX_FILE_PATH_CHARS];
     WCHAR remote_path[MAX_FILE_PATH_CHARS];
     WCHAR tailscale_addr[512];
+    char start_app[VR_LAUNCHER_MAX_SERIAL_LEN + 32];
     bool has_serial;
     bool has_profile;
     bool has_file;
     bool has_tailscale_addr;
+    bool has_start_app;
     bool use_connect_manager;
     bool mirror;
 };
@@ -163,6 +175,8 @@ static HWND pull_remote_path_edit;
 static HWND device_list;
 static HWND detail_edit;
 static HWND log_edit;
+static HWND devices_empty_label;
+static HWND activity_empty_label;
 static HWND companion_window;
 static HWND companion_status;
 static HWND companion_file_list;
@@ -185,6 +199,8 @@ static bool exiting;
 static bool companion_busy;
 static bool companion_polling_enabled;
 static bool companion_snapshot_initialized;
+static unsigned remote_focus_attempts;
+static char pending_tailscale_start_app[VR_LAUNCHER_MAX_SERIAL_LEN + 32];
 static struct vr_companion_snapshot companion_snapshot;
 static long long last_notification_time;
 static WNDPROC file_drop_edit_wndproc;
@@ -194,6 +210,15 @@ show_dashboard(void);
 
 static void
 show_companion_window(HWND owner);
+
+static void
+show_file_manager_window(HWND owner);
+
+static void
+show_remote_app_search(void);
+
+static bool
+start_launcher_command(HWND hwnd, enum vr_launcher_command command);
 
 static void
 receive_file_from_phone(HWND hwnd);
@@ -254,6 +279,9 @@ append_edit_text(HWND edit, const WCHAR *text) {
 
 static void
 append_log_text(const WCHAR *text) {
+    if (activity_empty_label) {
+        ShowWindow(activity_empty_label, SW_HIDE);
+    }
     append_edit_text(log_edit, text);
 }
 
@@ -1203,6 +1231,12 @@ append_launcher_args(WCHAR *cmdline, size_t len,
 }
 
 static bool
+append_mirror_resilience_args(WCHAR *cmdline, size_t len) {
+    return append_ascii_arg(cmdline, len, "--stay-awake")
+        && append_ascii_arg(cmdline, len, "--screen-off-timeout=86400");
+}
+
+static bool
 build_command_line(const struct command_runner *runner,
                    WCHAR *cmdline, size_t len) {
     cmdline[0] = L'\0';
@@ -1216,7 +1250,7 @@ build_command_line(const struct command_runner *runner,
         }
 
         if (runner->command == VR_LAUNCHER_COMMAND_CONNECT) {
-            return true;
+            return append_mirror_resilience_args(cmdline, len);
         }
 
         if (runner->command == VR_LAUNCHER_COMMAND_DEVICE_STATUS) {
@@ -1233,14 +1267,19 @@ build_command_line(const struct command_runner *runner,
 
         return runner->has_profile
             && append_ascii_option_arg(cmdline, len, "--profile=",
-                                       runner->profile_name);
+                                       runner->profile_name)
+            && append_mirror_resilience_args(cmdline, len);
     }
 
     if (runner->command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT) {
-        return runner->has_tailscale_addr
+        bool appended = runner->has_tailscale_addr
             ? append_wide_option_arg(cmdline, len, L"--tailscale=",
                                      runner->tailscale_addr)
             : append_ascii_arg(cmdline, len, "--tailscale");
+        return appended && append_mirror_resilience_args(cmdline, len)
+            && (!runner->has_start_app
+                || append_ascii_option_arg(cmdline, len, "--start-app=",
+                                           runner->start_app));
     }
 
     if (runner->command == VR_LAUNCHER_COMMAND_SEND_FILE) {
@@ -1274,7 +1313,13 @@ build_command_line(const struct command_runner *runner,
                                       runner->file_path);
     }
 
-    return append_launcher_args(cmdline, len, runner->command);
+    bool appended = append_launcher_args(cmdline, len, runner->command);
+    if (!appended) {
+        return false;
+    }
+    return runner->command == VR_LAUNCHER_COMMAND_CONNECT
+        ? append_mirror_resilience_args(cmdline, len)
+        : true;
 }
 
 static void
@@ -1503,6 +1548,192 @@ get_selected_serial(char *out, size_t out_len) {
     return true;
 }
 
+static bool
+load_saved_connection_serial(const WCHAR *filename, char *out,
+                             size_t out_len) {
+    WCHAR config_dir[MAX_PATH];
+    WCHAR path[MAX_PATH];
+    if (!out_len
+            || !get_vr_config_dir(config_dir,
+                                  sizeof(config_dir) / sizeof(config_dir[0]),
+                                  false)
+            || swprintf(path, sizeof(path) / sizeof(path[0]), L"%ls\\%ls",
+                        config_dir, filename) <= 0) {
+        return false;
+    }
+
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) {
+        return false;
+    }
+    bool loaded = fgets(out, (int) out_len, file) != NULL;
+    fclose(file);
+    if (!loaded) {
+        out[0] = '\0';
+        return false;
+    }
+
+    size_t len = strlen(out);
+    while (len && (out[len - 1] == '\r' || out[len - 1] == '\n'
+            || out[len - 1] == ' ' || out[len - 1] == '\t')) {
+        out[--len] = '\0';
+    }
+    return len > 0;
+}
+
+static bool
+get_app_search_serial(char *out, size_t out_len, bool *used_saved) {
+    *used_saved = false;
+    if (get_selected_serial(out, out_len)) {
+        return true;
+    }
+
+    /* Finder auto-reconnect uses Tailscale, so prefer its persisted target. */
+    if (load_saved_connection_serial(L"connect-manager-last-tailscale",
+                                     out, out_len)) {
+        *used_saved = true;
+        return true;
+    }
+
+    return false;
+}
+
+static void
+handle_app_search_status(const WCHAR *message) {
+    set_status(message);
+    append_log_line(message);
+}
+
+struct mirror_window_search {
+    DWORD process_id;
+    HWND window;
+};
+
+static BOOL CALLBACK
+find_mirror_window(HWND window, LPARAM userdata) {
+    struct mirror_window_search *search =
+        (struct mirror_window_search *) userdata;
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(window, &process_id);
+    if (process_id == search->process_id && IsWindowVisible(window)
+            && GetWindowTextLengthW(window) > 0) {
+        search->window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static bool
+focus_mirror_window(void) {
+    EnterCriticalSection(&process_lock);
+    DWORD process_id = mirror_process ? GetProcessId(mirror_process) : 0;
+    LeaveCriticalSection(&process_lock);
+    if (!process_id) {
+        return false;
+    }
+
+    struct mirror_window_search search = {
+        .process_id = process_id,
+        .window = NULL,
+    };
+    EnumWindows(find_mirror_window, (LPARAM) &search);
+    if (search.window) {
+        HWND foreground = GetForegroundWindow();
+        DWORD foreground_thread = foreground
+                                ? GetWindowThreadProcessId(foreground, NULL)
+                                : 0;
+        DWORD current_thread = GetCurrentThreadId();
+        bool attached = foreground_thread
+                     && foreground_thread != current_thread
+                     && AttachThreadInput(current_thread, foreground_thread,
+                                          TRUE);
+        if (IsIconic(search.window)) {
+            ShowWindow(search.window, SW_RESTORE);
+        }
+        BringWindowToTop(search.window);
+        SetForegroundWindow(search.window);
+        SetFocus(search.window);
+        if (attached) {
+            AttachThreadInput(current_thread, foreground_thread, FALSE);
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool
+activate_or_start_tailscale_remote(const char *package_name, int user_id) {
+    if (focus_mirror_window()) {
+        KillTimer(main_window, ID_TIMER_REMOTE_FOCUS);
+        remote_focus_attempts = 0;
+        return false;
+    }
+
+    if (!is_mirror_running()) {
+        append_log_line(L"Finder: remote is inactive; starting Tailscale "
+                        L"Connect automatically.");
+        set_status(L"Opening remote through Tailscale...");
+        if (package_name && package_name[0]) {
+            if (user_id >= 0) {
+                snprintf(pending_tailscale_start_app,
+                         sizeof(pending_tailscale_start_app), "@%d:%s",
+                         user_id, package_name);
+            } else {
+                snprintf(pending_tailscale_start_app,
+                         sizeof(pending_tailscale_start_app), "%s",
+                         package_name);
+            }
+        }
+        bool launch_attached = start_launcher_command(
+            main_window, VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT);
+        pending_tailscale_start_app[0] = '\0';
+        remote_focus_attempts = 60;
+        SetTimer(main_window, ID_TIMER_REMOTE_FOCUS, 250, NULL);
+        return launch_attached;
+    }
+
+    remote_focus_attempts = 60;
+    SetTimer(main_window, ID_TIMER_REMOTE_FOCUS, 250, NULL);
+    return false;
+}
+
+static void
+show_remote_app_search(void) {
+    char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+    bool used_saved = false;
+    if (!get_app_search_serial(serial, sizeof(serial), &used_saved)) {
+        set_status(L"No selected or saved Tailscale phone for Win+F");
+        append_log_line(
+            L"Win+F needs a selected phone or a saved Tailscale connection.");
+        return;
+    }
+
+    if (used_saved) {
+        WCHAR message[384];
+        swprintf(message, sizeof(message) / sizeof(message[0]),
+                 L"Win+F: using the last Tailscale phone (%hs).", serial);
+        set_status(message);
+        append_log_line(message);
+    }
+
+    WCHAR adb_path[MAX_FILE_PATH_CHARS];
+    WCHAR scrcpy_path[MAX_FILE_PATH_CHARS];
+    if (!find_adb_path(adb_path,
+                       sizeof(adb_path) / sizeof(adb_path[0]))
+            || !find_scrcpy_path(scrcpy_path,
+                                 sizeof(scrcpy_path)
+                                     / sizeof(scrcpy_path[0]))) {
+        set_status(L"ADB or scrcpy was not found for app search");
+        append_log_line(L"Win+F could not locate adb.exe or scrcpy.exe.");
+        return;
+    }
+
+    prepare_child_environment(scrcpy_path);
+    vr_app_search_show(app_instance, main_window, serial, adb_path,
+                       scrcpy_path, handle_app_search_status,
+                       activate_or_start_tailscale_remote);
+}
+
 static void
 update_device_summary(void) {
     char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
@@ -1537,6 +1768,9 @@ device_list_add(const struct vr_launcher_device_info *device) {
              device->serial, device->state, device->type);
     SendMessageW(device_list, LB_ADDSTRING, 0, (LPARAM) label);
     ++device_count;
+    if (devices_empty_label) {
+        ShowWindow(devices_empty_label, SW_HIDE);
+    }
 }
 
 static void
@@ -1547,6 +1781,9 @@ update_devices_from_health(const char *output) {
 
     SendMessageW(device_list, LB_RESETCONTENT, 0, 0);
     device_count = 0;
+    if (devices_empty_label) {
+        ShowWindow(devices_empty_label, SW_SHOW);
+    }
 
     struct vr_launcher_device_info parsed[VR_LAUNCHER_MAX_DEVICES];
     size_t parsed_count = 0;
@@ -1618,7 +1855,9 @@ update_detail_from_status(const char *output) {
              L"Device: %hs %hs\r\n"
              L"Android: %hs\r\n"
              L"Wi-Fi IP: %hs\r\n"
-             L"Screen: %hs\r\n"
+             L"Screen size: %hs\r\n"
+             L"Display: %hs\r\n"
+             L"Lock status: %hs\r\n"
              L"Battery: %hs\r\n"
              L"Storage: %hs\r\n\r\n"
              L"Raw JSON tetap ada di panel log untuk debugging.",
@@ -1628,6 +1867,8 @@ update_detail_from_status(const char *output) {
              status.android_version[0] ? status.android_version : "-",
              status.wifi_ip[0] ? status.wifi_ip : "-",
              status.screen_line[0] ? status.screen_line : "-",
+             status.display_state[0] ? status.display_state : "Unknown",
+             status.lock_state[0] ? status.lock_state : "Unknown",
              status.battery_level[0] ? status.battery_level : "-",
              status.storage_line[0] ? status.storage_line : "-");
 
@@ -2157,7 +2398,7 @@ start_runner(struct command_runner *runner) {
     return true;
 }
 
-static void
+static bool
 start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
     bool mirror = command == VR_LAUNCHER_COMMAND_CONNECT
                || command == VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT
@@ -2166,19 +2407,19 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
     if (mirror && is_mirror_running()) {
         append_log_line(L"Mirror is already running. Click Disconnect first.");
         set_status(L"Mirror already running");
-        return;
+        return false;
     }
 
     if (!mirror && is_utility_running()) {
         append_log_line(L"Another utility command is still running.");
         set_status(L"Utility command still running");
-        return;
+        return false;
     }
 
     if (command == VR_LAUNCHER_COMMAND_WIRELESS_SETUP && is_mirror_running()) {
         append_log_line(L"Disconnect mirror before Wireless Setup.");
         set_status(L"Disconnect mirror before Wireless Setup");
-        return;
+        return false;
     }
 
     WCHAR scrcpy_path[MAX_PATH];
@@ -2187,14 +2428,14 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
         append_log_line(L"scrcpy.exe was not found next to the launcher or in "
                         L"build\\app.");
         set_status(L"scrcpy.exe not found");
-        return;
+        return false;
     }
 
     struct command_runner *runner =
         HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*runner));
     if (!runner) {
         append_log_line(L"Out of memory.");
-        return;
+        return false;
     }
 
     runner->hwnd = hwnd;
@@ -2215,6 +2456,12 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
                               / sizeof(runner->tailscale_addr[0])));
         trim_wide_in_place(runner->tailscale_addr);
         runner->has_tailscale_addr = runner->tailscale_addr[0] != L'\0';
+        if (pending_tailscale_start_app[0]) {
+            snprintf(runner->start_app, sizeof(runner->start_app), "%s",
+                     pending_tailscale_start_app);
+            runner->has_start_app = true;
+            pending_tailscale_start_app[0] = '\0';
+        }
     }
 
     WCHAR header[512];
@@ -2233,6 +2480,10 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
                  vr_launcher_command_label(command));
     }
     append_log_line(header);
+    if (mirror) {
+        append_log_line(
+            L"Wake enabled: press Space or Enter if the phone display sleeps.");
+    }
 
     switch (command) {
         case VR_LAUNCHER_COMMAND_CONNECT:
@@ -2265,15 +2516,7 @@ start_launcher_command(HWND hwnd, enum vr_launcher_command command) {
             break;
     }
 
-    HANDLE thread = CreateThread(NULL, 0, command_thread, runner, 0, NULL);
-    if (!thread) {
-        HeapFree(GetProcessHeap(), 0, runner);
-        append_log_line(L"Failed to create command worker thread.");
-        set_status(L"Command failed");
-        return;
-    }
-
-    CloseHandle(thread);
+    return start_runner(runner);
 }
 
 static void
@@ -2560,9 +2803,73 @@ disconnect_mirror(void) {
 static HWND
 create_button(HWND parent, const WCHAR *label, int id) {
     return CreateWindowW(L"BUTTON", label,
-                         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                         WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | BS_NOTIFY,
                          0, 0, 0, 0, parent, (HMENU) (uintptr_t) id,
                          app_instance, NULL);
+}
+
+static enum vr_theme_button_variant
+main_button_variant(int id) {
+    switch (id) {
+        case ID_BUTTON_CONNECT:
+        case ID_BUTTON_TAILSCALE:
+        case ID_BUTTON_FILE_MANAGER:
+        case ID_BUTTON_INTERNET:
+        case ID_BUTTON_PROFILE_RUN:
+            return VR_THEME_BUTTON_PRIMARY;
+        case ID_BUTTON_WIRELESS:
+        case ID_BUTTON_REFRESH:
+        case ID_BUTTON_STATUS:
+        case ID_BUTTON_COMPANION:
+        case ID_BUTTON_PULL_FILE:
+        case ID_BUTTON_PROFILE_SAVE:
+            return VR_THEME_BUTTON_POSITIVE;
+        case ID_BUTTON_DISCONNECT:
+        case ID_BUTTON_EXIT:
+        case ID_BUTTON_PROFILE_DELETE:
+            return VR_THEME_BUTTON_DANGER;
+        default:
+            return VR_THEME_BUTTON_DEFAULT;
+    }
+}
+
+static enum vr_theme_icon
+main_button_icon(int id) {
+    switch (id) {
+        case ID_BUTTON_CONNECT:
+            return VR_THEME_ICON_CONNECT;
+        case ID_BUTTON_DISCONNECT:
+            return VR_THEME_ICON_DISCONNECT;
+        case ID_BUTTON_WIRELESS:
+            return VR_THEME_ICON_WIRELESS;
+        case ID_BUTTON_REFRESH:
+        case ID_BUTTON_PROFILE_REFRESH:
+            return VR_THEME_ICON_REFRESH;
+        case ID_BUTTON_STATUS:
+            return VR_THEME_ICON_STATUS;
+        case ID_BUTTON_CLEAR:
+            return VR_THEME_ICON_CLEAR;
+        case ID_BUTTON_EXIT:
+            return VR_THEME_ICON_EXIT;
+        case ID_BUTTON_TAILSCALE:
+            return VR_THEME_ICON_NETWORK;
+        case ID_BUTTON_COMPANION:
+            return VR_THEME_ICON_PHONE;
+        case ID_BUTTON_FILE_MANAGER:
+            return VR_THEME_ICON_FOLDER;
+        case ID_BUTTON_INTERNET:
+            return VR_THEME_ICON_NETWORK;
+        case ID_BUTTON_PULL_FILE:
+            return VR_THEME_ICON_DOWNLOAD;
+        case ID_BUTTON_PROFILE_SAVE:
+            return VR_THEME_ICON_SAVE;
+        case ID_BUTTON_PROFILE_RUN:
+            return VR_THEME_ICON_PLAY;
+        case ID_BUTTON_PROFILE_DELETE:
+            return VR_THEME_ICON_DELETE;
+        default:
+            return VR_THEME_ICON_NONE;
+    }
 }
 
 static HWND
@@ -2581,12 +2888,12 @@ resize_controls(HWND hwnd) {
     RECT rect;
     GetClientRect(hwnd, &rect);
 
-    const int margin = 16;
-    const int gap = 10;
-    const int title_h = 32;
-    const int status_h = 24;
-    const int button_h = 34;
-    const int heading_h = 22;
+    const int margin = 22;
+    const int gap = 12;
+    const int title_h = 38;
+    const int status_h = 26;
+    const int button_h = 38;
+    const int heading_h = 26;
     int width = rect.right - rect.left;
     int height = rect.bottom - rect.top;
 
@@ -2594,7 +2901,7 @@ resize_controls(HWND hwnd) {
     int y = margin;
     MoveWindow(title_label, x, y, width - (2 * margin), title_h, TRUE);
 
-    y += title_h + 4;
+    y += title_h + 2;
     MoveWindow(status_label, x, y, width - (2 * margin) - 240, status_h, TRUE);
     MoveWindow(autostart_check, width - margin - 220, y, 220, status_h, TRUE);
 
@@ -2624,26 +2931,36 @@ resize_controls(HWND hwnd) {
     y += button_h + gap;
     x = margin;
     int tailscale_label_w = 130;
-    int tailscale_button_w = 170;
-    int companion_button_w = 120;
+    int tailscale_button_w = 180;
+    int internet_button_w = 145;
+    int companion_button_w = 140;
+    int file_manager_button_w = 145;
     MoveWindow(tailscale_label, x, y, tailscale_label_w, button_h, TRUE);
     x += tailscale_label_w + gap;
     MoveWindow(tailscale_addr_edit, x, y,
                width - (2 * margin) - tailscale_label_w
-                   - tailscale_button_w - companion_button_w - (3 * gap),
+                   - tailscale_button_w - companion_button_w
+                   - internet_button_w - file_manager_button_w - (5 * gap),
                button_h, TRUE);
-    x = width - margin - tailscale_button_w - companion_button_w - gap;
+    x = width - margin - tailscale_button_w - internet_button_w
+      - companion_button_w - file_manager_button_w - (3 * gap);
     MoveWindow(GetDlgItem(hwnd, ID_BUTTON_TAILSCALE), x, y,
                tailscale_button_w, button_h, TRUE);
     x += tailscale_button_w + gap;
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_INTERNET), x, y,
+               internet_button_w, button_h, TRUE);
+    x += internet_button_w + gap;
     MoveWindow(GetDlgItem(hwnd, ID_BUTTON_COMPANION), x, y,
                companion_button_w, button_h, TRUE);
+    x += companion_button_w + gap;
+    MoveWindow(GetDlgItem(hwnd, ID_BUTTON_FILE_MANAGER), x, y,
+               file_manager_button_w, button_h, TRUE);
 
     y += button_h + gap;
 
     int log_h = height / 3;
-    if (log_h < 150) {
-        log_h = 150;
+    if (log_h < 145) {
+        log_h = 145;
     }
     if (log_h > 260) {
         log_h = 260;
@@ -2655,8 +2972,8 @@ resize_controls(HWND hwnd) {
     }
 
     int content_w = width - (2 * margin);
-    int left_w = 300;
-    int right_w = 310;
+    int left_w = 280;
+    int right_w = 360;
     if (width < 980) {
         left_w = 260;
         right_w = 260;
@@ -2678,6 +2995,8 @@ resize_controls(HWND hwnd) {
     y += heading_h;
 
     MoveWindow(device_list, left_x, y, left_w, main_h, TRUE);
+    MoveWindow(devices_empty_label, left_x + 18,
+               y + (main_h / 2) - 28, left_w - 36, 56, TRUE);
 
     int detail_h = (main_h - gap - heading_h) * 55 / 100;
     int file_y = y + detail_h + gap;
@@ -2720,19 +3039,23 @@ resize_controls(HWND hwnd) {
     y += heading_h;
     MoveWindow(log_edit, margin, y, width - (2 * margin),
                height - y - margin, TRUE);
+    MoveWindow(activity_empty_label, margin + 18,
+               y + ((height - y - margin) / 2) - 28,
+               width - (2 * margin) - 36, 56, TRUE);
 }
 
 static void
 create_fonts(void) {
-    title_font = CreateFontW(-24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+    title_font = CreateFontW(-28, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    ui_font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_PITCH | FF_SWISS,
+                             L"Segoe UI Variable Display");
+    ui_font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                           DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    mono_font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    mono_font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                             DEFAULT_PITCH | FF_MODERN, L"Consolas");
@@ -2759,6 +3082,8 @@ apply_fonts(HWND hwnd) {
     set_font(GetDlgItem(hwnd, ID_BUTTON_CLEAR), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_EXIT), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_COMPANION), ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_FILE_MANAGER), ui_font);
+    set_font(GetDlgItem(hwnd, ID_BUTTON_INTERNET), ui_font);
     set_font(GetDlgItem(hwnd, ID_CHECK_AUTOSTART), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_REFRESH), ui_font);
     set_font(GetDlgItem(hwnd, ID_BUTTON_PROFILE_SAVE), ui_font);
@@ -2793,7 +3118,7 @@ add_tray_icon(HWND hwnd) {
     tray_icon.uID = 1;
     tray_icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     tray_icon.uCallbackMessage = WM_VR_TRAY;
-    tray_icon.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    tray_icon.hIcon = vr_theme_app_icon(false);
     wcscpy(tray_icon.szTip, L"VR Mobile");
 
     tray_added = Shell_NotifyIconW(NIM_ADD, &tray_icon);
@@ -2818,6 +3143,7 @@ show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, ID_TRAY_CONNECT, L"Connect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_TAILSCALE, L"Tailscale connect");
+    AppendMenuW(menu, MF_STRING, ID_TRAY_INTERNET, L"Internet connect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_COMPANION, L"Companion bridge");
     AppendMenuW(menu, MF_STRING, ID_TRAY_DISCONNECT, L"Disconnect");
     AppendMenuW(menu, MF_STRING, ID_TRAY_REFRESH, L"Refresh devices");
@@ -2922,11 +3248,13 @@ static LRESULT CALLBACK
 companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_CREATE:
+            vr_theme_apply_window(hwnd);
             companion_status = create_companion_control(
                 hwnd, L"STATIC", L"Select a device, then click Refresh.",
                 SS_LEFT, 0, ID_COMPANION_STATUS);
             create_companion_control(hwnd, L"BUTTON", L"Refresh",
-                                     BS_PUSHBUTTON, 0, ID_COMPANION_REFRESH);
+                                     BS_OWNERDRAW | BS_NOTIFY, 0,
+                                     ID_COMPANION_REFRESH);
             create_companion_control(hwnd, L"STATIC", L"Outbox files",
                                      SS_LEFT, 0,
                                      ID_COMPANION_FILES_HEADING);
@@ -2942,10 +3270,11 @@ companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE,
                 ID_COMPANION_NOTIFICATION_LIST);
             create_companion_control(hwnd, L"BUTTON", L"Receive selected",
-                                     BS_PUSHBUTTON, 0,
+                                     BS_OWNERDRAW | BS_NOTIFY, 0,
                                      ID_COMPANION_RECEIVE);
             create_companion_control(hwnd, L"BUTTON", L"Open on Android",
-                                     BS_PUSHBUTTON, 0, ID_COMPANION_OPEN);
+                                     BS_OWNERDRAW | BS_NOTIFY, 0,
+                                     ID_COMPANION_OPEN);
             create_companion_control(hwnd, L"STATIC", L"Quick reply",
                                      SS_LEFT, 0,
                                      ID_COMPANION_REPLY_HEADING);
@@ -2953,7 +3282,8 @@ companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 hwnd, L"EDIT", L"", ES_AUTOHSCROLL, WS_EX_CLIENTEDGE,
                 ID_COMPANION_REPLY_TEXT);
             create_companion_control(hwnd, L"BUTTON", L"Send reply",
-                                     BS_PUSHBUTTON, 0, ID_COMPANION_REPLY);
+                                     BS_OWNERDRAW | BS_NOTIFY, 0,
+                                     ID_COMPANION_REPLY);
 
             for (int id = ID_COMPANION_REFRESH;
                     id <= ID_COMPANION_STATUS; ++id) {
@@ -2966,6 +3296,9 @@ companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             set_font(GetDlgItem(hwnd, ID_COMPANION_NOTIFICATIONS_HEADING),
                      ui_font);
             set_font(GetDlgItem(hwnd, ID_COMPANION_REPLY_HEADING), ui_font);
+            vr_theme_apply_listbox(companion_file_list);
+            vr_theme_apply_listbox(companion_notification_list);
+            vr_theme_apply_edit(companion_reply_edit);
             resize_companion_controls(hwnd);
             return 0;
 
@@ -3000,6 +3333,39 @@ companion_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             break;
 
+        case WM_DRAWITEM:
+            {
+                enum vr_theme_button_variant variant =
+                    LOWORD(wparam) == ID_COMPANION_RECEIVE
+                        ? VR_THEME_BUTTON_PRIMARY
+                  : LOWORD(wparam) == ID_COMPANION_REPLY
+                        ? VR_THEME_BUTTON_POSITIVE
+                        : VR_THEME_BUTTON_DEFAULT;
+                enum vr_theme_icon icon =
+                    LOWORD(wparam) == ID_COMPANION_REFRESH
+                        ? VR_THEME_ICON_REFRESH
+                  : LOWORD(wparam) == ID_COMPANION_RECEIVE
+                        ? VR_THEME_ICON_DOWNLOAD
+                  : LOWORD(wparam) == ID_COMPANION_OPEN
+                        ? VR_THEME_ICON_OPEN
+                  : LOWORD(wparam) == ID_COMPANION_REPLY
+                        ? VR_THEME_ICON_REPLY
+                        : VR_THEME_ICON_NONE;
+                if (vr_theme_draw_button((DRAWITEMSTRUCT *) lparam,
+                                         variant, icon)) {
+                    return TRUE;
+                }
+            }
+            break;
+
+        case WM_ERASEBKGND:
+            return vr_theme_erase_background(hwnd, (HDC) wparam);
+
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            return vr_theme_control_color(msg, (HDC) wparam, (HWND) lparam);
+
         case WM_CLOSE:
             ShowWindow(hwnd, SW_HIDE);
             return 0;
@@ -3023,7 +3389,8 @@ show_companion_window(HWND owner) {
         wc.lpfnWndProc = companion_window_proc;
         wc.hInstance = app_instance;
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+        wc.hIcon = vr_theme_app_icon(false);
+        wc.hbrBackground = vr_theme_background_brush();
         wc.lpszClassName = L"VRMobileCompanionWindow";
         if (!RegisterClassW(&wc)
                 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
@@ -3039,6 +3406,8 @@ show_companion_window(HWND owner) {
             append_log_line(L"Could not create companion bridge window.");
             return;
         }
+        SendMessageW(companion_window, WM_SETICON, ICON_SMALL,
+                     (LPARAM) vr_theme_app_icon(true));
     }
 
     ShowWindow(companion_window, SW_SHOW);
@@ -3047,6 +3416,30 @@ show_companion_window(HWND owner) {
     companion_polling_enabled = true;
     SetTimer(main_window, ID_TIMER_COMPANION, 3000, NULL);
     start_companion_refresh();
+}
+
+static void
+show_file_manager_window(HWND owner) {
+    char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
+    if (!get_selected_serial(serial, sizeof(serial))) {
+        MessageBoxW(owner,
+                    L"Select a connected Android device first. Click Refresh "
+                    L"Devices if the list is empty.",
+                    L"VR Mobile File Manager", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    WCHAR adb_path[MAX_FILE_PATH_CHARS];
+    if (!find_adb_path(adb_path,
+                       sizeof(adb_path) / sizeof(adb_path[0]))) {
+        MessageBoxW(owner,
+                    L"adb.exe was not found. Install Android platform-tools "
+                    L"or place adb next to scrcpy.",
+                    L"VR Mobile File Manager", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    vr_file_manager_show(app_instance, owner, adb_path, serial);
 }
 
 static void
@@ -3122,8 +3515,10 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_CREATE:
             create_fonts();
+            vr_theme_apply_window(hwnd);
 
-            title_label = create_label(hwnd, L"VR Mobile Dashboard");
+            title_label = create_label(
+                hwnd, L"VR Mobile  \x2022  Desktop Control Center");
             status_label = create_label(hwnd,
                                         L"Ready. Click Refresh Devices first.");
             autostart_check =
@@ -3133,15 +3528,17 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                               (HMENU) (uintptr_t) ID_CHECK_AUTOSTART,
                               app_instance, NULL);
 
-            create_button(hwnd, L"Connect", ID_BUTTON_CONNECT);
+            create_button(hwnd, L"USB / Auto", ID_BUTTON_CONNECT);
             create_button(hwnd, L"Disconnect", ID_BUTTON_DISCONNECT);
-            create_button(hwnd, L"Wireless Setup", ID_BUTTON_WIRELESS);
-            create_button(hwnd, L"Refresh Devices", ID_BUTTON_REFRESH);
-            create_button(hwnd, L"Device Status", ID_BUTTON_STATUS);
+            create_button(hwnd, L"Wi-Fi Setup", ID_BUTTON_WIRELESS);
+            create_button(hwnd, L"Refresh", ID_BUTTON_REFRESH);
+            create_button(hwnd, L"Status", ID_BUTTON_STATUS);
             create_button(hwnd, L"Clear Log", ID_BUTTON_CLEAR);
             create_button(hwnd, L"Exit", ID_BUTTON_EXIT);
             create_button(hwnd, L"Tailscale Connect", ID_BUTTON_TAILSCALE);
             create_button(hwnd, L"Companion", ID_BUTTON_COMPANION);
+            create_button(hwnd, L"File Manager", ID_BUTTON_FILE_MANAGER);
+            create_button(hwnd, L"Internet", ID_BUTTON_INTERNET);
 
             tailscale_label = create_label(hwnd, L"Tailscale address");
             tailscale_addr_edit =
@@ -3151,11 +3548,11 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                 (HMENU) ID_TAILSCALE_ADDR, app_instance,
                                 NULL);
 
-            devices_heading = create_label(hwnd, L"Devices");
-            detail_heading = create_label(hwnd, L"Device Status");
-            file_drop_heading = create_label(hwnd, L"File Transfer");
-            profile_heading = create_label(hwnd, L"Profiles");
-            log_heading = create_label(hwnd, L"Log");
+            devices_heading = create_label(hwnd, L"CONNECTED DEVICES");
+            detail_heading = create_label(hwnd, L"DEVICE OVERVIEW");
+            file_drop_heading = create_label(hwnd, L"QUICK TRANSFER");
+            profile_heading = create_label(hwnd, L"DEVICE PROFILES");
+            log_heading = create_label(hwnd, L"ACTIVITY");
 
             device_list =
                 CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
@@ -3163,6 +3560,12 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                     LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
                                 0, 0, 0, 0, hwnd, (HMENU) ID_DEVICE_LIST,
                                 app_instance, NULL);
+            devices_empty_label = CreateWindowW(
+                L"STATIC",
+                L"No devices yet\r\nClick Refresh to discover Android devices",
+                WS_CHILD | WS_VISIBLE | SS_CENTER,
+                0, 0, 0, 0, hwnd, (HMENU) ID_DEVICES_EMPTY,
+                app_instance, NULL);
 
             detail_edit =
                 CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -3203,7 +3606,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                 0, 0, 0, 0, hwnd, (HMENU) ID_PROFILE_NAME,
                                 app_instance, NULL);
 
-            create_button(hwnd, L"Refresh", ID_BUTTON_PROFILE_REFRESH);
+            create_button(hwnd, L"Sync", ID_BUTTON_PROFILE_REFRESH);
             create_button(hwnd, L"Save", ID_BUTTON_PROFILE_SAVE);
             create_button(hwnd, L"Run", ID_BUTTON_PROFILE_RUN);
             create_button(hwnd, L"Delete", ID_BUTTON_PROFILE_DELETE);
@@ -3222,8 +3625,28 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                     ES_READONLY,
                                 0, 0, 0, 0, hwnd, (HMENU) ID_LOG,
                                 app_instance, NULL);
+            activity_empty_label = CreateWindowW(
+                L"STATIC",
+                L"Activity is quiet\r\nConnection and transfer events appear here",
+                WS_CHILD | WS_VISIBLE | SS_CENTER,
+                0, 0, 0, 0, hwnd, (HMENU) ID_ACTIVITY_EMPTY,
+                app_instance, NULL);
 
             apply_fonts(hwnd);
+            set_font(devices_empty_label, ui_font);
+            set_font(activity_empty_label, ui_font);
+            vr_theme_apply_surface_label(devices_empty_label);
+            vr_theme_apply_surface_label(activity_empty_label);
+            vr_theme_apply_checkbox(autostart_check);
+            vr_theme_apply_edit(tailscale_addr_edit);
+            vr_theme_apply_listbox(device_list);
+            vr_theme_apply_edit(detail_edit);
+            vr_theme_apply_edit(file_drop_edit);
+            vr_theme_apply_edit(pull_remote_path_edit);
+            vr_theme_apply_listbox(profile_list);
+            vr_theme_apply_edit(profile_name_edit);
+            vr_theme_apply_edit(profile_args_edit);
+            vr_theme_apply_edit(log_edit);
             set_detail(L"Refresh devices to populate this panel.");
             refresh_file_queue_display();
             refresh_profiles();
@@ -3234,6 +3657,12 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 (WNDPROC) SetWindowLongPtrW(file_drop_edit, GWLP_WNDPROC,
                                             (LONG_PTR) file_drop_edit_proc);
             add_tray_icon(hwnd);
+            if (!vr_app_search_enable_shortcut(hwnd)) {
+                append_log_line(L"Windows could not register the Win+F app "
+                                L"search shortcut.");
+            } else {
+                append_log_line(L"Win+F is ready: find and open phone apps.");
+            }
             resize_controls(hwnd);
             return 0;
 
@@ -3294,6 +3723,7 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     return 0;
                 case ID_BUTTON_CLEAR:
                     SetWindowTextW(log_edit, L"");
+                    ShowWindow(activity_empty_label, SW_SHOW);
                     return 0;
                 case ID_BUTTON_EXIT:
                     exit_application(hwnd);
@@ -3321,6 +3751,13 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 case ID_TRAY_COMPANION:
                     show_companion_window(hwnd);
                     return 0;
+                case ID_BUTTON_FILE_MANAGER:
+                    show_file_manager_window(hwnd);
+                    return 0;
+                case ID_BUTTON_INTERNET:
+                case ID_TRAY_INTERNET:
+                    vr_internet_connect_show(app_instance, hwnd);
+                    return 0;
                 case ID_TRAY_OPEN:
                     show_dashboard();
                     return 0;
@@ -3329,6 +3766,22 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     return 0;
             }
             break;
+
+        case WM_DRAWITEM:
+            if (vr_theme_draw_button((DRAWITEMSTRUCT *) lparam,
+                                     main_button_variant(LOWORD(wparam)),
+                                     main_button_icon(LOWORD(wparam)))) {
+                return TRUE;
+            }
+            break;
+
+        case WM_ERASEBKGND:
+            return vr_theme_erase_background(hwnd, (HDC) wparam);
+
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            return vr_theme_control_color(msg, (HDC) wparam, (HWND) lparam);
 
         case WM_DROPFILES:
             process_drop_files(hwnd, (HDROP) wparam);
@@ -3344,7 +3797,32 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             return 0;
 
+        case WM_HOTKEY:
+            if (vr_app_search_is_hotkey(wparam)) {
+                show_remote_app_search();
+                return 0;
+            }
+            break;
+
+        case WM_VR_APP_SEARCH_HOTKEY:
+            show_remote_app_search();
+            return 0;
+
+        case WM_VR_TAILSCALE_HOTKEY:
+            start_launcher_command(hwnd,
+                                   VR_LAUNCHER_COMMAND_TAILSCALE_CONNECT);
+            return 0;
+
         case WM_TIMER:
+            if (wparam == ID_TIMER_REMOTE_FOCUS) {
+                if (focus_mirror_window() || !remote_focus_attempts) {
+                    KillTimer(hwnd, ID_TIMER_REMOTE_FOCUS);
+                    remote_focus_attempts = 0;
+                } else {
+                    --remote_focus_attempts;
+                }
+                return 0;
+            }
             if (wparam == ID_TIMER_COMPANION && companion_polling_enabled
                     && !companion_busy) {
                 char serial[VR_LAUNCHER_MAX_SERIAL_LEN];
@@ -3432,6 +3910,9 @@ window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
 
         case WM_DESTROY:
+            KillTimer(hwnd, ID_TIMER_REMOTE_FOCUS);
+            vr_app_search_disable_shortcut(hwnd);
+            vr_app_search_shutdown();
             disable_drag_drop(hwnd);
             disable_drag_drop(file_drop_edit);
             if (file_drop_edit_wndproc) {
@@ -3455,6 +3936,12 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline,
     (void) prev_instance;
     (void) cmdline;
 
+    /*
+     * Keep the dashboard crisp and its requested size predictable on displays
+     * using Windows scaling. All launcher windows share this process setting.
+     */
+    SetProcessDPIAware();
+
     if (process_is_elevated()) {
         if (relaunch_with_explorer_token()) {
             return 0;
@@ -3468,6 +3955,7 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline,
     }
 
     app_instance = instance;
+    vr_theme_init();
     InitializeCriticalSection(&process_lock);
 
     WNDCLASSW wc;
@@ -3475,7 +3963,8 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline,
     wc.lpfnWndProc = window_proc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+    wc.hIcon = vr_theme_app_icon(false);
+    wc.hbrBackground = vr_theme_background_brush();
     wc.lpszClassName = L"VRMobileLauncherWindow";
 
     if (!RegisterClassW(&wc)) {
@@ -3483,14 +3972,17 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline,
         return 1;
     }
 
-    main_window = CreateWindowExW(0, wc.lpszClassName, L"VR Mobile",
+    main_window = CreateWindowExW(0, wc.lpszClassName,
+                                  L"VR Mobile \x2014 Desktop Control Center",
                                   WS_OVERLAPPEDWINDOW,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, 1040, 680,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 1180, 760,
                                   NULL, NULL, instance, NULL);
     if (!main_window) {
         DeleteCriticalSection(&process_lock);
         return 1;
     }
+    SendMessageW(main_window, WM_SETICON, ICON_SMALL,
+                 (LPARAM) vr_theme_app_icon(true));
 
     ShowWindow(main_window, show_cmd);
     UpdateWindow(main_window);

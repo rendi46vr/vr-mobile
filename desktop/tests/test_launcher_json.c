@@ -57,6 +57,8 @@ test_parse_device_status(void) {
         "\"android_version\":\"16\","
         "\"wifi_ip\":\"10.50.2.168\","
         "\"screen_size\":\"Physical size: 1200x2670\\nOverride size: 1200x2670\\n\","
+        "\"wakefulness\":\"  mWakefulness=Awake\\n\","
+        "\"keyguard\":\"KeyguardServiceDelegate\\n  showing=false\\n\","
         "\"battery\":\"Current Battery Service state:\\n  level: 87\\n\","
         "\"storage\":\"Filesystem      Size Used Avail Use% Mounted on\\n"
         "/dev/fuse       228G 89G 139G 40% /sdcard\\n\"}\n";
@@ -71,6 +73,8 @@ test_parse_device_status(void) {
     assert(!strcmp("16", status.android_version));
     assert(!strcmp("10.50.2.168", status.wifi_ip));
     assert(!strcmp("Physical size: 1200x2670", status.screen_line));
+    assert(!strcmp("ON / Awake", status.display_state));
+    assert(!strcmp("OPEN / Unlocked", status.lock_state));
     assert(!strcmp("87%", status.battery_level));
     assert(!strcmp("Filesystem      Size Used Avail Use% Mounted on",
                    status.storage_line));

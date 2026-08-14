@@ -397,6 +397,8 @@ vr_launcher_parse_device_status(const char *output,
     }
 
     char screen[256] = "";
+    char wakefulness[4096] = "";
+    char keyguard[4096] = "";
     char battery[4096] = "";
     char storage[4096] = "";
 
@@ -411,11 +413,31 @@ vr_launcher_parse_device_status(const char *output,
     json_extract_string(json, "wifi_ip", status->wifi_ip,
                         sizeof(status->wifi_ip));
     json_extract_string(json, "screen_size", screen, sizeof(screen));
+    json_extract_string(json, "wakefulness", wakefulness,
+                        sizeof(wakefulness));
+    json_extract_string(json, "keyguard", keyguard, sizeof(keyguard));
     json_extract_string(json, "battery", battery, sizeof(battery));
     json_extract_string(json, "storage", storage, sizeof(storage));
 
     first_line_or_empty(screen, status->screen_line,
                         sizeof(status->screen_line));
+    if (strstr(wakefulness, "mWakefulness=Awake")) {
+        snprintf(status->display_state, sizeof(status->display_state),
+                 "ON / Awake");
+    } else if (strstr(wakefulness, "mWakefulness=Dozing")) {
+        snprintf(status->display_state, sizeof(status->display_state),
+                 "LOCKED / Dozing");
+    } else if (strstr(wakefulness, "mWakefulness=Asleep")) {
+        snprintf(status->display_state, sizeof(status->display_state),
+                 "OFF / Asleep");
+    }
+    if (strstr(keyguard, "showing=false")) {
+        snprintf(status->lock_state, sizeof(status->lock_state),
+                 "OPEN / Unlocked");
+    } else if (strstr(keyguard, "showing=true")) {
+        snprintf(status->lock_state, sizeof(status->lock_state),
+                 "LOCKED");
+    }
     first_line_or_empty(storage, status->storage_line,
                         sizeof(status->storage_line));
     extract_battery_level(battery, status->battery_level,

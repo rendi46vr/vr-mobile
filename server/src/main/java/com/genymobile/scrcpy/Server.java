@@ -265,6 +265,11 @@ public final class Server {
                 Ln.i("Processing Android apps... (this may take some time)");
                 Ln.i(LogUtils.buildAppListMessage());
             }
+            if (options.getListAppIcons()) {
+                Workarounds.apply();
+                Ln.i("Processing Android app icons in background cache format...");
+                Ln.i(LogUtils.buildAppIconListMessage());
+            }
             // Just print the requested data, do not mirror
             return;
         }

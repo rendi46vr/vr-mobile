@@ -22,6 +22,8 @@ struct vr_launcher_device_status {
     char android_version[64];
     char wifi_ip[128];
     char screen_line[256];
+    char display_state[64];
+    char lock_state[64];
     char battery_level[32];
     char storage_line[256];
 };

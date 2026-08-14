@@ -450,6 +450,9 @@ execute_server(struct sc_server *server,
     if (params->list & SC_OPTION_LIST_APPS) {
         ADD_PARAM("list_apps=true");
     }
+    if (params->list & SC_OPTION_LIST_APP_ICONS) {
+        ADD_PARAM("list_app_icons=true");
+    }
 
 #undef ADD_PARAM
 
@@ -1352,6 +1355,13 @@ sc_server_run_device_status(struct sc_server *server, const char *serial) {
         char *wm_size =
             sc_adb_shell_output(&server->intr, serial, "wm size", 4096,
                                 SC_ADB_SILENT);
+        char *wakefulness = sc_adb_shell_output(
+            &server->intr, serial,
+            "dumpsys power | grep 'mWakefulness='", 4096, SC_ADB_SILENT);
+        char *keyguard = sc_adb_shell_output(
+            &server->intr, serial,
+            "dumpsys window policy | grep -A 8 'KeyguardServiceDelegate'",
+            4096, SC_ADB_SILENT);
         char *battery =
             sc_adb_shell_output(&server->intr, serial, "dumpsys battery",
                                 16384, SC_ADB_SILENT);
@@ -1371,6 +1381,10 @@ sc_server_run_device_status(struct sc_server *server, const char *serial) {
         sc_server_print_json_string(ip);
         fputs(",\"screen_size\":", stdout);
         sc_server_print_json_string(wm_size);
+        fputs(",\"wakefulness\":", stdout);
+        sc_server_print_json_string(wakefulness);
+        fputs(",\"keyguard\":", stdout);
+        sc_server_print_json_string(keyguard);
         fputs(",\"battery\":", stdout);
         sc_server_print_json_string(battery);
         fputs(",\"storage\":", stdout);
@@ -1382,6 +1396,8 @@ sc_server_run_device_status(struct sc_server *server, const char *serial) {
         free(android);
         free(ip);
         free(wm_size);
+        free(wakefulness);
+        free(keyguard);
         free(battery);
         free(storage);
         return true;

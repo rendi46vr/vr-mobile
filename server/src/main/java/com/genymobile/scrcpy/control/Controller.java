@@ -77,6 +77,11 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor();
     private ExecutorService startAppExecutor;
+    private ExecutorService authPinExecutor;
+    private final AtomicBoolean authPinInspectionRunning = new AtomicBoolean();
+    private final AtomicBoolean authPinTapWhenReady = new AtomicBoolean();
+    private volatile int[] authPinBounds;
+    private volatile int authPinBoundsRotation = -1;
 
     private Thread thread;
     private Thread keepActiveThread;
@@ -298,6 +303,12 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         if (keepActiveThread != null) {
             keepActiveThread.interrupt();
         }
+        if (startAppExecutor != null) {
+            startAppExecutor.shutdownNow();
+        }
+        if (authPinExecutor != null) {
+            authPinExecutor.shutdownNow();
+        }
         if (thread != null) {
             thread.interrupt();
         }
@@ -407,6 +418,12 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                     return true;
                 case ControlMessage.TYPE_START_APP:
                     startAppAsync(msg.getText());
+                    return true;
+                case ControlMessage.TYPE_SELECT_AUTH_PIN:
+                    selectAuthPinAsync();
+                    return true;
+                case ControlMessage.TYPE_PREPARE_AUTH_PIN:
+                    prepareAuthPinAsync();
                     return true;
                 case ControlMessage.TYPE_RESIZE_DISPLAY:
                     resizeDisplay(msg.getWidth(), msg.getHeight());
@@ -766,10 +783,121 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         startAppExecutor.submit(() -> startApp(name));
     }
 
+    private void prepareAuthPinAsync() {
+        startAuthPinInspection(false);
+    }
+
+    private void selectAuthPinAsync() {
+        int rotation = ServiceManager.getWindowManager().getRotation();
+        int[] bounds = authPinBoundsRotation == rotation ? authPinBounds : null;
+        if (bounds == null) {
+            bounds = AuthPinFallback.loadCachedBounds(rotation);
+            if (bounds != null) {
+                authPinBounds = bounds;
+                authPinBoundsRotation = rotation;
+            }
+        }
+        if (bounds != null) {
+            int x = bounds[0] + (bounds[2] - bounds[0]) / 2;
+            int y = bounds[1] + (bounds[3] - bounds[1]) / 2;
+            if (injectTap(x, y)) {
+                Ln.i("Selected cached biometric PIN fallback");
+            }
+            return;
+        }
+        startAuthPinInspection(true);
+    }
+
+    private void startAuthPinInspection(boolean tapWhenReady) {
+        if (tapWhenReady) {
+            authPinTapWhenReady.set(true);
+        }
+        if (!authPinInspectionRunning.compareAndSet(false, true)) {
+            return;
+        }
+        if (authPinExecutor == null) {
+            authPinExecutor = Executors.newSingleThreadExecutor();
+        }
+        authPinExecutor.submit(() -> {
+            try {
+                int[] bounds = AuthPinFallback.findPinButtonOnDevice();
+                if (bounds == null) {
+                    Ln.d("No biometric PIN fallback button is currently visible");
+                    return;
+                }
+                int rotation = ServiceManager.getWindowManager().getRotation();
+                authPinBounds = bounds;
+                authPinBoundsRotation = rotation;
+                AuthPinFallback.saveCachedBounds(rotation, bounds);
+                if (authPinTapWhenReady.getAndSet(false)) {
+                    int x = bounds[0] + (bounds[2] - bounds[0]) / 2;
+                    int y = bounds[1] + (bounds[3] - bounds[1]) / 2;
+                    if (injectTap(x, y)) {
+                        Ln.i("Selected biometric PIN fallback");
+                    } else {
+                        Ln.w("Could not select biometric PIN fallback");
+                    }
+                }
+            } finally {
+                authPinInspectionRunning.set(false);
+                if (authPinTapWhenReady.getAndSet(false)
+                        && authPinBounds != null) {
+                    selectAuthPinAsync();
+                }
+            }
+        });
+    }
+
+    private boolean injectTap(float x, float y) {
+        int targetDisplayId = getActionDisplayId();
+        if (targetDisplayId == Device.DISPLAY_ID_NONE) {
+            return false;
+        }
+        long downTime = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0);
+        down.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        boolean downOk = Device.injectEvent(down, targetDisplayId, Device.INJECT_MODE_WAIT_FOR_RESULT);
+        down.recycle();
+        if (!downOk) {
+            return false;
+        }
+        SystemClock.sleep(35);
+        MotionEvent up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0);
+        up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        boolean upOk = Device.injectEvent(up, targetDisplayId, Device.INJECT_MODE_WAIT_FOR_RESULT);
+        up.recycle();
+        return upOk;
+    }
+
     private void startApp(String name) {
         boolean forceStopBeforeStart = name.startsWith("+");
         if (forceStopBeforeStart) {
             name = name.substring(1);
+        }
+
+        int userId = -2;
+        if (name.startsWith("@")) {
+            int separator = name.indexOf(':');
+            if (separator <= 1) {
+                Ln.w("Invalid user-qualified app name \"" + name + "\"");
+                return;
+            }
+            try {
+                userId = Integer.parseInt(name.substring(1, separator));
+            } catch (NumberFormatException e) {
+                Ln.w("Invalid Android user in app name \"" + name + "\"");
+                return;
+            }
+            if (userId < 0) {
+                Ln.w("Invalid Android user in app name \"" + name + "\"");
+                return;
+            }
+            name = name.substring(separator + 1);
+        }
+
+        if (name.isEmpty()) {
+            Ln.w("Cannot start an app with an empty name");
+            return;
         }
 
         DeviceApp app;
@@ -806,7 +934,8 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         }
 
         Ln.i("Starting app \"" + app.getName() + "\" [" + app.getPackageName() + "] on display " + startAppDisplayId + "...");
-        Device.startApp(app.getPackageName(), startAppDisplayId, forceStopBeforeStart);
+        Device.startApp(app.getPackageName(), startAppDisplayId,
+                forceStopBeforeStart, userId);
     }
 
     private int getStartAppDisplayId() {

@@ -181,9 +181,9 @@ static void test_tailscale_options(void) {
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, "100.80.12.34"));
     assert(args.opts.max_size == 1024);
-    assert(!strcmp(args.opts.max_fps, "24"));
+    assert(!strcmp(args.opts.max_fps, "20"));
     assert(args.opts.video_bit_rate == 1000000);
-    assert(args.opts.video_buffer == SC_TICK_FROM_MS(50));
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(70));
 
     args.opts = scrcpy_options_default;
     char *argv_last[] = {"scrcpy", "--tailscale"};
@@ -193,9 +193,9 @@ static void test_tailscale_options(void) {
     assert(args.opts.tailscale_dst);
     assert(!strcmp(args.opts.tailscale_dst, ""));
     assert(args.opts.max_size == 1024);
-    assert(!strcmp(args.opts.max_fps, "24"));
+    assert(!strcmp(args.opts.max_fps, "20"));
     assert(args.opts.video_bit_rate == 1000000);
-    assert(args.opts.video_buffer == SC_TICK_FROM_MS(50));
+    assert(args.opts.video_buffer == SC_TICK_FROM_MS(70));
 
     args.opts = scrcpy_options_default;
     char *argv_override[] = {

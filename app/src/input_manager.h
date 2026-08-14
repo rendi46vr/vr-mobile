@@ -48,6 +48,7 @@ struct sc_input_manager {
     uint64_t next_sequence; // used for request acknowledgements
 
     bool disconnected;
+    bool auth_pin_frame_dark;
 };
 
 struct sc_input_manager_params {
@@ -72,5 +73,8 @@ sc_input_manager_init(struct sc_input_manager *im,
 void
 sc_input_manager_handle_event(struct sc_input_manager *im,
                               const SDL_Event *event);
+
+void
+sc_input_manager_notify_video_frame(struct sc_input_manager *im);
 
 #endif

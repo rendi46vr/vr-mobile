@@ -212,14 +212,17 @@ memakai `--serial=<serial> --send-file=<path>`; jika tidak, launcher memakai
 
 **Fitur lanjutan:**
 
- - File browser HP.
+ - File browser HP. **Status:** implemented v1 di launcher untuk browse
+   `/sdcard`, upload/download, create folder, rename, dan confirmed delete.
  - Pull file dari HP ke PC. **Status:** implemented v1 melalui input path Android
    dan dialog Save As di launcher.
- - Delete/rename file dari UI.
+ - Delete/rename file dari UI. **Status:** implemented dengan validasi path,
+   pencegahan overwrite saat rename, dan konfirmasi permanen saat delete.
 
 **Command tambahan yang perlu dibuat nanti:**
 
- - `--list-phone-files=<path>`
+ - `--list-phone-files=<path>` tidak diperlukan untuk launcher v1 karena File
+   Manager memakai ADB worker terpisah agar dapat berjalan saat mirror aktif.
  - `--pull-file=<remote-path> --pull-target=<local-path>` **implemented**
 
 Companion v2 menerima content URI melalui Android Share, menyimpan file ke
@@ -348,7 +351,9 @@ Belum selesai karena butuh komponen tambahan:
 
  - Filter notifikasi per aplikasi dan redaksi konten lock screen.
  - Native drag Outbox Windows ke Explorer membutuhkan cache lokal dan OLE drag.
- - File browser companion diperlukan untuk pemilihan file tanpa Android Share.
+ - File browser Companion di sisi Android masih diperlukan jika user ingin
+   memilih file tanpa Android Share ketika desktop/ADB tidak tersedia. Browser
+   file desktop melalui ADB sudah implemented.
 
 
 ## Definition of Done

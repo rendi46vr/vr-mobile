@@ -197,9 +197,10 @@ nanti memanggil flow yang sama.
 
 ## 7. File Transfer Drag & Drop
 
-**Status:** v3 implemented for desktop-to-phone drag, reverse transfer via
-`--pull-file=<remote-path> --pull-target=<local-path>`, dan pemilihan file
-Companion Outbox dari launcher Windows.
+**Status:** v4 implemented for desktop-to-phone drag, reverse transfer via
+`--pull-file=<remote-path> --pull-target=<local-path>`, pemilihan file
+Companion Outbox, dan File Manager desktop untuk browse serta mengelola
+shared storage Android.
 
 **Masalah user:** transfer file lewat command line tidak natural untuk user
 desktop.
@@ -224,6 +225,10 @@ companion, Outbox MediaStore, snapshot ADB, serta daftar file pada panel
 Companion Windows. Drag langsung dari File Manager Android keluar dari window
 mirror tetap tidak tersedia karena scrcpy core hanya menerima video dan
 koordinat input; file manager Android tidak memberikan URI/path ke desktop.
+V4 menambahkan jendela File Manager Windows untuk device terpilih dengan
+navigasi `/sdcard`, metadata file, upload/download, create folder, rename, dan
+delete terkonfirmasi. Launcher menolak mutasi di luar `/sdcard`; private app
+storage seperti `/data/data` tetap tidak dapat diakses tanpa root.
 
 
 ## 8. Clipboard Sync Plus
@@ -344,6 +349,21 @@ missing device), error `adb connect`, dan error startup scrcpy.
 (`unauthorized`, `offline`, no device, multiple devices) ke instruksi praktis.
 Tahap berikutnya perlu menyatukan semua error ADB connect/startup ke tabel
 translator yang lebih lengkap.
+
+## 13. Internet Connect
+
+**Status:** pairing/signaling v1 implemented; WebRTC/QUIC media transport
+pending.
+
+Internet Connect adalah opsi keempat yang tidak mengganti USB, Wi-Fi, atau
+Tailscale. Desktop membuat QR/device code lima menit, Companion mengklaimnya
+melalui HTTPS, lalu kedua sisi menyimpan trusted link token secara terenkripsi.
+Signaling server menangani pairing sekali pakai dan presence untuk reconnect.
+
+Token Android dilindungi Android Keystore AES-256-GCM dan token Windows
+dilindungi DPAPI. QR dibuat lokal agar pairing code tidak dikirim ke generator
+gambar eksternal. Fase berikutnya menghubungkan video, audio, control,
+clipboard, dan file melalui WebRTC/QUIC dengan STUN serta TURN fallback.
 
 
 ## Urutan implementasi awal yang disarankan

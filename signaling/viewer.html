@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VR Mobile — Standard Remote Preview</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #07111f; color: #f7fbff; }
+    header { display: flex; align-items: center; justify-content: space-between;
+      gap: 20px; padding: 18px 24px; background: #0d1a2e; border-bottom: 1px solid #22314a; }
+    h1 { margin: 0; font-size: 20px; font-weight: 650; }
+    #status { color: #95a7bf; font-size: 14px; }
+    #status.online { color: #2dd4bf; }
+    main { display: grid; place-items: center; min-height: calc(100vh - 66px); padding: 24px; }
+    .screen { position: relative; display: grid; place-items: center; width: min(100%, 1100px);
+      min-height: 60vh; overflow: hidden; border: 1px solid #263854; border-radius: 22px;
+      background: radial-gradient(circle at top, #152641, #080f1c 60%); box-shadow: 0 28px 80px #0008; }
+    img { display: none; max-width: 100%; max-height: calc(100vh - 120px); object-fit: contain; }
+    .empty { max-width: 460px; padding: 36px; text-align: center; color: #a9b8cc; line-height: 1.6; }
+    .badge { display: inline-block; margin-bottom: 12px; padding: 6px 10px; border-radius: 999px;
+      background: #233657; color: #cbd9ec; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <header><h1>VR Mobile — Standard Remote Preview</h1><div id="status">Preparing secure viewer…</div></header>
+  <main><section class="screen"><img id="frame" alt="Android screen preview"><div class="empty" id="empty">
+    <span class="badge">No ADB beta</span><br>On the phone, open VR Mobile Companion and choose
+    <strong>Start screen sharing</strong>, then approve Android's screen-capture prompt.
+  </div></section></main>
+  <script>
+    const params = new URLSearchParams(location.hash.slice(1));
+    const token = params.get("token") || "";
+    const peerId = params.get("peerId") || "";
+    history.replaceState(null, "", location.pathname);
+    const status = document.querySelector("#status");
+    const image = document.querySelector("#frame");
+    const empty = document.querySelector("#empty");
+    let sequence = 0;
+    let objectUrl = "";
+    async function poll() {
+      if (!token || !peerId) {
+        status.textContent = "Open this viewer from the paired desktop app.";
+        return;
+      }
+      try {
+        const response = await fetch(`/v1/relay/frame?after=${sequence}`, {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}`, "X-VR-Peer-ID": peerId },
+        });
+        if (response.status === 200) {
+          const nextUrl = URL.createObjectURL(await response.blob());
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          objectUrl = nextUrl;
+          image.src = objectUrl;
+          image.style.display = "block";
+          empty.style.display = "none";
+          sequence = Number(response.headers.get("X-Frame-Sequence") || sequence + 1);
+          status.textContent = `Live preview • frame ${sequence}`;
+          status.className = "online";
+        } else if (response.status !== 204) {
+          status.textContent = `Viewer error • HTTP ${response.status}`;
+          status.className = "";
+        }
+      } catch (error) {
+        status.textContent = "Waiting for signaling server…";
+        status.className = "";
+      }
+      setTimeout(poll, 350);
+    }
+    poll();
+  </script>
+</body>
+</html>

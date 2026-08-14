@@ -197,6 +197,8 @@ sc_control_msg_serialize(const struct sc_control_msg *msg, uint8_t *buf) {
         case SC_CONTROL_MSG_TYPE_RESET_VIDEO:
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_IN:
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_OUT:
+        case SC_CONTROL_MSG_TYPE_SELECT_AUTH_PIN:
+        case SC_CONTROL_MSG_TYPE_PREPARE_AUTH_PIN:
             // no additional data
             return 1;
         default:
@@ -340,6 +342,12 @@ sc_control_msg_log(const struct sc_control_msg *msg) {
             break;
         case SC_CONTROL_MSG_TYPE_CAMERA_ZOOM_OUT:
             LOG_CMSG("camera zoom out");
+            break;
+        case SC_CONTROL_MSG_TYPE_SELECT_AUTH_PIN:
+            LOG_CMSG("select authentication PIN fallback");
+            break;
+        case SC_CONTROL_MSG_TYPE_PREPARE_AUTH_PIN:
+            LOG_CMSG("prepare authentication PIN fallback");
             break;
         default:
             LOG_CMSG("unknown type: %u", (unsigned) msg->type);

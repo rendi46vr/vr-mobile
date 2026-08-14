@@ -126,6 +126,11 @@ public final class ActivityManager {
 
     @SuppressWarnings("ConstantConditions")
     public int startActivity(Intent intent, Bundle options) {
+        return startActivity(intent, options, -2);
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    public int startActivity(Intent intent, Bundle options, int userId) {
         try {
             Method method = getStartActivityAsUserMethod();
             return (int) method.invoke(
@@ -140,7 +145,7 @@ public final class ActivityManager {
                     /* startFlags */ 0,
                     /* profilerInfo */ null,
                     /* bOptions */ options,
-                    /* userId */ /* UserHandle.USER_CURRENT */ -2);
+                    /* userId */ userId);
         } catch (Throwable e) {
             Ln.e("Could not invoke method", e);
             return 0;
@@ -155,9 +160,13 @@ public final class ActivityManager {
     }
 
     public void forceStopPackage(String packageName) {
+        forceStopPackage(packageName, -2);
+    }
+
+    public void forceStopPackage(String packageName, int userId) {
         try {
             Method method = getForceStopPackageMethod();
-            method.invoke(manager, packageName, /* userId */ /* UserHandle.USER_CURRENT */ -2);
+            method.invoke(manager, packageName, userId);
         } catch (Throwable e) {
             Ln.e("Could not invoke method", e);
         }

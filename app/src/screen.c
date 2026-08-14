@@ -909,6 +909,7 @@ sc_screen_apply_frame(struct sc_screen *screen, bool can_resize) {
     sc_fps_counter_add_rendered_frame(&screen->fps_counter);
 
     AVFrame *frame = screen->frame;
+    sc_input_manager_notify_video_frame(&screen->im);
     struct sc_size new_frame_size = {frame->width, frame->height};
 
     if (screen->frame_size.width != new_frame_size.width

@@ -79,6 +79,7 @@ public class Options {
     private boolean listCameras;
     private boolean listCameraSizes;
     private boolean listApps;
+    private boolean listAppIcons;
 
     // Options not used by the scrcpy client, but useful to use scrcpy-server directly
     private boolean sendDeviceMeta = true; // send device name and size
@@ -275,7 +276,7 @@ public class Options {
     }
 
     public boolean getList() {
-        return listEncoders || listDisplays || listCameras || listCameraSizes || listApps;
+        return listEncoders || listDisplays || listCameras || listCameraSizes || listApps || listAppIcons;
     }
 
     public boolean getListEncoders() {
@@ -296,6 +297,10 @@ public class Options {
 
     public boolean getListApps() {
         return listApps;
+    }
+
+    public boolean getListAppIcons() {
+        return listAppIcons;
     }
 
     public boolean getSendDeviceMeta() {
@@ -477,6 +482,9 @@ public class Options {
                     break;
                 case "list_apps":
                     options.listApps = Boolean.parseBoolean(value);
+                    break;
+                case "list_app_icons":
+                    options.listAppIcons = Boolean.parseBoolean(value);
                     break;
                 case "camera_id":
                     if (!value.isEmpty()) {

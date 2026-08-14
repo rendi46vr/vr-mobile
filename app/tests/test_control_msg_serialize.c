@@ -431,6 +431,32 @@ static void test_serialize_start_app(void) {
     assert(!memcmp(buf, expected, sizeof(expected)));
 }
 
+static void test_serialize_select_auth_pin(void) {
+    struct sc_control_msg msg = {
+        .type = SC_CONTROL_MSG_TYPE_SELECT_AUTH_PIN,
+    };
+
+    uint8_t buf[SC_CONTROL_MSG_MAX_SIZE];
+    size_t size = sc_control_msg_serialize(&msg, buf);
+    assert(size == 1);
+
+    const uint8_t expected[] = {
+        SC_CONTROL_MSG_TYPE_SELECT_AUTH_PIN,
+    };
+    assert(!memcmp(buf, expected, sizeof(expected)));
+}
+
+static void test_serialize_prepare_auth_pin(void) {
+    struct sc_control_msg msg = {
+        .type = SC_CONTROL_MSG_TYPE_PREPARE_AUTH_PIN,
+    };
+
+    uint8_t buf[SC_CONTROL_MSG_MAX_SIZE];
+    size_t size = sc_control_msg_serialize(&msg, buf);
+    assert(size == 1);
+    assert(buf[0] == SC_CONTROL_MSG_TYPE_PREPARE_AUTH_PIN);
+}
+
 static void test_serialize_reset_video(void) {
     struct sc_control_msg msg = {
         .type = SC_CONTROL_MSG_TYPE_RESET_VIDEO,
@@ -539,6 +565,8 @@ int main(int argc, char *argv[]) {
     test_serialize_uhid_destroy();
     test_serialize_open_hard_keyboard();
     test_serialize_start_app();
+    test_serialize_select_auth_pin();
+    test_serialize_prepare_auth_pin();
     test_serialize_reset_video();
     test_serialize_camera_set_torch();
     test_serialize_camera_zoom_in();

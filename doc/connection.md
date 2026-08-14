@@ -138,9 +138,9 @@ automatically applies lightweight video defaults unless you explicitly override
 them:
 
  - `--max-size=1024`
- - `--max-fps=24`
+ - `--max-fps=20`
  - `--video-bit-rate=1M`
- - `--video-buffer=50`
+ - `--video-buffer=70`
 
 For slower networks, reduce them further:
 

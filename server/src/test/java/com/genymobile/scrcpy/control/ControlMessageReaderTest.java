@@ -317,6 +317,26 @@ public class ControlMessageReaderTest {
     }
 
     @Test
+    public void testParseSelectAuthPin() throws IOException {
+        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{(byte) ControlMessage.TYPE_SELECT_AUTH_PIN});
+        ControlMessageReader reader = new ControlMessageReader(bis);
+
+        ControlMessage event = reader.read();
+        Assert.assertEquals(ControlMessage.TYPE_SELECT_AUTH_PIN, event.getType());
+        Assert.assertEquals(-1, bis.read()); // EOS
+    }
+
+    @Test
+    public void testParsePrepareAuthPin() throws IOException {
+        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{(byte) ControlMessage.TYPE_PREPARE_AUTH_PIN});
+        ControlMessageReader reader = new ControlMessageReader(bis);
+
+        ControlMessage event = reader.read();
+        Assert.assertEquals(ControlMessage.TYPE_PREPARE_AUTH_PIN, event.getType());
+        Assert.assertEquals(-1, bis.read()); // EOS
+    }
+
+    @Test
     public void testParseUhidCreate() throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(bos);

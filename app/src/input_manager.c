@@ -49,6 +49,7 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->next_sequence = 1; // 0 is reserved for SC_SEQUENCE_INVALID
 
     im->disconnected = false;
+    im->auth_pin_frame_dark = false;
 }
 
 static void
@@ -89,6 +90,99 @@ action_app_switch(struct sc_input_manager *im, enum sc_action action) {
 static inline void
 action_power(struct sc_input_manager *im, enum sc_action action) {
     send_keycode(im, AKEYCODE_POWER, action, "POWER");
+}
+
+static void
+action_wakeup(struct sc_input_manager *im) {
+    send_keycode(im, AKEYCODE_WAKEUP, SC_ACTION_DOWN, "WAKEUP");
+    send_keycode(im, AKEYCODE_WAKEUP, SC_ACTION_UP, "WAKEUP");
+}
+
+static bool
+screen_frame_is_mostly_dark(const struct sc_screen *screen) {
+    const AVFrame *frame = screen ? screen->frame : NULL;
+    if (!frame || !frame->data[0] || frame->width <= 0 || frame->height <= 0
+            || frame->linesize[0] <= 0) {
+        return false;
+    }
+
+    /*
+     * Android screen decoding normally exposes luminance in plane 0. Secure
+     * FLAG_SECURE surfaces are rendered as an almost completely black frame.
+     * Sample a small grid so Space remains cheap during normal typing.
+     */
+    unsigned dark = 0;
+    unsigned sampled = 0;
+    for (unsigned gy = 1; gy <= 8; ++gy) {
+        int y = (int) ((uint64_t) gy * frame->height / 9);
+        const uint8_t *row = frame->data[0] + y * frame->linesize[0];
+        for (unsigned gx = 1; gx <= 12; ++gx) {
+            int x = (int) ((uint64_t) gx * frame->width / 13);
+            dark += row[x] <= 24;
+            ++sampled;
+        }
+    }
+    return dark * 100 >= sampled * 96;
+}
+
+static void
+request_auth_pin_fallback(struct sc_input_manager *im) {
+    struct sc_control_msg msg = {
+        .type = SC_CONTROL_MSG_TYPE_SELECT_AUTH_PIN,
+    };
+    if (!sc_controller_push_msg(im->controller, &msg)) {
+        LOGW("Could not request authentication PIN fallback");
+    }
+}
+
+void
+sc_input_manager_notify_video_frame(struct sc_input_manager *im) {
+    if (!im->controller || !im->kp || im->camera || im->disconnected) {
+        return;
+    }
+    bool dark = screen_frame_is_mostly_dark(im->screen);
+    if (dark && !im->auth_pin_frame_dark) {
+        struct sc_control_msg msg = {
+            .type = SC_CONTROL_MSG_TYPE_PREPARE_AUTH_PIN,
+        };
+        if (!sc_controller_push_msg(im->controller, &msg)) {
+            LOGW("Could not prepare authentication PIN fallback");
+        }
+    }
+    im->auth_pin_frame_dark = dark;
+}
+
+static void
+focus_remote_window(struct sc_input_manager *im) {
+    if (im->screen && im->screen->window) {
+        SDL_RaiseWindow(im->screen->window);
+    }
+}
+
+static void
+action_sleep(struct sc_input_manager *im) {
+    send_keycode(im, AKEYCODE_SLEEP, SC_ACTION_DOWN, "SLEEP");
+    send_keycode(im, AKEYCODE_SLEEP, SC_ACTION_UP, "SLEEP");
+    focus_remote_window(im);
+}
+
+static void
+start_app(struct sc_input_manager *im, const char *name) {
+    char *copy = strdup(name);
+    if (!copy) {
+        LOG_OOM();
+        return;
+    }
+
+    struct sc_control_msg msg;
+    msg.type = SC_CONTROL_MSG_TYPE_START_APP;
+    msg.start_app.name = copy;
+    if (!sc_controller_push_msg(im->controller, &msg)) {
+        LOGW("Could not request start app '%s'", name);
+        free(copy);
+    } else {
+        focus_remote_window(im);
+    }
 }
 
 static inline void
@@ -427,6 +521,8 @@ sc_input_manager_process_key(struct sc_input_manager *im,
     bool down = event->type == SDL_EVENT_KEY_DOWN;
     bool ctrl = event->mod & SDL_KMOD_CTRL;
     bool shift = event->mod & SDL_KMOD_SHIFT;
+    bool alt = event->mod & SDL_KMOD_ALT;
+    bool super = event->mod & SDL_KMOD_GUI;
     bool repeat = event->repeat;
 
     // Either the modifier includes a shortcut modifier, or the key
@@ -436,6 +532,25 @@ sc_input_manager_process_key(struct sc_input_manager *im,
     uint16_t mods = im->sdl_shortcut_mods;
     bool is_shortcut = sc_shortcut_mods_is_shortcut_mod(mods, mod)
                     || sc_shortcut_mods_is_shortcut_key(mods, sdl_keycode);
+
+    /*
+     * Text events (notably SPACE) do not wake a sleeping Android display.
+     * Wake it explicitly before forwarding common resume keys. KEYCODE_WAKEUP
+     * is idempotent while the display is already on, so normal typing is not
+     * changed.
+     */
+    if (control && im->kp && !im->camera && !paused && !disconnected
+            && down && !repeat && !is_shortcut
+            && !ctrl && !shift && !alt && !super
+            && (sdl_keycode == SDLK_SPACE
+                || sdl_keycode == SDLK_RETURN
+                || sdl_keycode == SDLK_KP_ENTER)) {
+        action_wakeup(im);
+        if (sdl_keycode == SDLK_SPACE
+                && screen_frame_is_mostly_dark(im->screen)) {
+            request_auth_pin_fallback(im);
+        }
+    }
 
     if (down && !repeat && !disconnected) {
         if (sdl_keycode == im->last_keycode && mod == im->last_mod) {
@@ -449,10 +564,50 @@ sc_input_manager_process_key(struct sc_input_manager *im,
 
     // Shortcuts that do not involve the MOD key
     switch (sdl_keycode) {
+        case SDLK_F1:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                start_app(im, "com.whatsapp");
+            }
+            return;
+        case SDLK_F2:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                start_app(im, "@999:com.whatsapp");
+            }
+            return;
+        case SDLK_F3:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                start_app(im, "com.facebook.katana");
+            }
+            return;
+        case SDLK_F4:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                start_app(im, "com.instagram.android");
+            }
+            return;
+        case SDLK_F5:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                start_app(im, "com.google.android.youtube");
+            }
+            return;
+        case SDLK_F10:
+            if (control && im->kp && !im->camera && !paused
+                    && !disconnected && !repeat && down
+                    && !ctrl && !shift && !alt && !super) {
+                action_sleep(im);
+            }
+            return;
         case SDLK_F11:
             if (video && !repeat && down) {
-                bool alt = event->mod & SDL_KMOD_ALT;
-                bool super = event->mod & SDL_KMOD_GUI;
                 if (!ctrl && !shift && !alt && !super) {
                     sc_screen_toggle_fullscreen(im->screen);
                 }

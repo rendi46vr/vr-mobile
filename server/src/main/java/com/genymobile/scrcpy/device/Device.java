@@ -296,6 +296,11 @@ public final class Device {
     }
 
     public static void startApp(String packageName, int displayId, boolean forceStop) {
+        startApp(packageName, displayId, forceStop, -2);
+    }
+
+    public static void startApp(String packageName, int displayId,
+            boolean forceStop, int userId) {
         PackageManager pm = FakeContext.get().getPackageManager();
 
         Intent launchIntent = getLaunchIntent(pm, packageName);
@@ -315,8 +320,8 @@ public final class Device {
 
         ActivityManager am = ServiceManager.getActivityManager();
         if (forceStop) {
-            am.forceStopPackage(packageName);
+            am.forceStopPackage(packageName, userId);
         }
-        am.startActivity(launchIntent, options);
+        am.startActivity(launchIntent, options, userId);
     }
 }

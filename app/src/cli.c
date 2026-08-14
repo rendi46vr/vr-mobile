@@ -22,8 +22,8 @@
 
 #define SC_TAILSCALE_DEFAULT_MAX_SIZE 1024
 #define SC_TAILSCALE_DEFAULT_VIDEO_BIT_RATE 1000000
-#define SC_TAILSCALE_DEFAULT_MAX_FPS "24"
-#define SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS 50
+#define SC_TAILSCALE_DEFAULT_MAX_FPS "20"
+#define SC_TAILSCALE_DEFAULT_VIDEO_BUFFER_MS 70
 
 enum {
     OPT_WINDOW_TITLE = 1000,
@@ -115,6 +115,7 @@ enum {
     OPT_GAMEPAD,
     OPT_NEW_DISPLAY,
     OPT_LIST_APPS,
+    OPT_LIST_APP_ICONS,
     OPT_START_APP,
     OPT_SCREEN_OFF_TIMEOUT,
     OPT_SAVE_PROFILE,
@@ -560,6 +561,11 @@ static const struct sc_option options[] = {
         .longopt_id = OPT_LIST_APPS,
         .longopt = "list-apps",
         .text = "List Android apps installed on the device.",
+    },
+    {
+        .longopt_id = OPT_LIST_APP_ICONS,
+        .longopt = "list-app-icons",
+        .text = "List Android app icons as base64 PNG data.",
     },
     {
         .longopt_id = OPT_LIST_CAMERAS,
@@ -3117,6 +3123,9 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case OPT_LIST_APPS:
                 opts->list |= SC_OPTION_LIST_APPS;
+                break;
+            case OPT_LIST_APP_ICONS:
+                opts->list |= SC_OPTION_LIST_APP_ICONS;
                 break;
             case OPT_REQUIRE_AUDIO:
                 opts->require_audio = true;

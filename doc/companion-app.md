@@ -14,11 +14,11 @@ Target utamanya adalah transfer file Android ke PC, notification bridge,
 pairing desktop, dan integrasi Android content URI.
 
 
-## Status v2
+## Status v3
 
 Package: `com.vrmobile.companion`
 
-Version: `0.2.0`
+Version: `0.3.0`
 
 Minimum Android: Android 10 (API 29)
 
@@ -39,7 +39,25 @@ Fitur yang sudah dibuat:
    `RemoteInput`.
  - Pilih file Outbox dari panel Windows tanpa mengetik path Android.
  - Unit test sanitasi nama file.
- - Tidak meminta permission Internet.
+ - V3 meminta permission Internet hanya untuk opsi Internet Connect yang
+   diaktifkan user. ADB bridge tetap dapat digunakan tanpa pairing internet.
+
+Fitur Internet Connect v3:
+
+ - Internet Connect tampil sebagai opsi keempat selain USB, Wi-Fi, dan
+   Tailscale.
+ - Scan QR memakai Google Code Scanner tanpa permission kamera permanen.
+ - Fallback input device code 10 digit.
+ - Signaling endpoint harus HTTPS; HTTP hanya diizinkan pada debug localhost.
+ - Pairing code berlaku lima menit dan hanya dapat diklaim sekali.
+ - Trusted desktop ID dan nama disimpan di private preferences.
+ - Link token dienkripsi AES-256-GCM dengan key non-exportable dari Android
+   Keystore.
+ - Auto-reconnect melakukan presence check ketika Companion aktif dan internet
+   kembali tersedia.
+ - Forget trusted laptop menghapus metadata serta key/token lokal.
+ - Transport WebRTC/QUIC untuk video/control masih fase berikutnya; fitur
+   bridge ADB existing tidak berubah.
 
 Yang belum dibuat:
 
@@ -118,7 +136,8 @@ adb -s SERIAL shell content call \
 ```
 
 Payload JSON dikodekan dengan Base64 URL-safe agar aman melewati output shell.
-Bridge tidak membuka socket Wi-Fi dan APK tidak memiliki permission Internet.
+Bridge ADB tidak membuka socket Wi-Fi dan tidak memakai permission Internet.
+APK v3 memiliki permission tersebut hanya untuk modul Internet Connect.
 
 Metode yang tersedia:
 
@@ -208,7 +227,8 @@ Peningkatan berikutnya:
 
 ## Security dan Privacy
 
- - V2 tetap tidak memiliki permission Internet.
+ - Bridge ADB tetap tidak mengirim data melalui internet. Permission Internet
+   v3 dipakai hanya saat user mengatur dan memakai Internet Connect.
  - Notification Access selalu opt-in dari Settings Android.
  - Tidak ada broad storage permission; file hanya dibaca dari URI yang
    dibagikan user.
