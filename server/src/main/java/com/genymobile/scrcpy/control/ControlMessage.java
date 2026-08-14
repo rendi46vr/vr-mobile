@@ -31,6 +31,7 @@ public final class ControlMessage {
     public static final int TYPE_RESIZE_DISPLAY = 21;
     public static final int TYPE_SELECT_AUTH_PIN = 22;
     public static final int TYPE_PREPARE_AUTH_PIN = 23;
+    public static final int TYPE_SCAN_FILE = 24;
 
     public static final long SEQUENCE_INVALID = 0;
 
@@ -186,6 +187,13 @@ public final class ControlMessage {
         msg.type = TYPE_RESIZE_DISPLAY;
         msg.width = width;
         msg.height = height;
+        return msg;
+    }
+
+    public static ControlMessage createScanFile(String path) {
+        ControlMessage msg = new ControlMessage();
+        msg.type = TYPE_SCAN_FILE;
+        msg.text = path;
         return msg;
     }
 

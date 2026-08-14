@@ -148,6 +148,13 @@ mirror process is running with elevated permissions. The desktop launcher
 automatically restarts without Administrator privileges so that Explorer and
 the mirror use the same Windows integrity level.
 
+After each successful push, _scrcpy_ requests the media scanner to scan the
+"push directory" so that the new files immediately appear in media apps.
+
+Note that some gallery apps only show files from a fixed list of folders
+(typically `DCIM/Camera`) in their main view; the file is then still reachable
+through the system Photo Picker and the folder view, but may not appear on the
+gallery home screen.
 
 ### Pull file from device
 
